@@ -1,20 +1,36 @@
-# Deploy PayLens to a single EC2 box over SSH.
+# Deploy PayLens on the EC2 box itself, through a self-hosted GitHub runner.
 #
-#   push to main -> GitHub Actions -> SSH into EC2 -> git pull -> docker build
+#   push to main -> runner on EC2 picks up the job -> git pull -> docker build
 #   -> replace the container -> check /health
 #
-# The image is built on the EC2 instance itself, so no registry and no AWS
-# credentials are involved. GitHub only needs an SSH key.
+# No SSH, no registry, no AWS credentials and no repository secrets. The runner
+# runs as `ubuntu` on the instance and works in the existing clone at
+# /home/ubuntu/projects/paylensv2.
 #
-# Required repository secrets:
-#   EC2_HOST     public IPv4 address of the instance
-#   EC2_USER     ubuntu
-#   EC2_SSH_KEY  private key dedicated to this workflow (its public half is in
-#                ~/.ssh/authorized_keys on the instance)
+# The runtime .env lives only in that clone. It is git-ignored, so `git pull`
+# never touches it, and this workflow only reads it through
+# `docker run --env-file`.
 #
-# The runtime .env lives only on the instance, at
-# /home/ubuntu/projects/paylensv2/.env. It is git-ignored, so `git pull` never
-# touches it, and this workflow only passes it to `docker run --env-file`.
+# ONE-TIME RUNNER SETUP (on the EC2 instance, as ubuntu)
+# ------------------------------------------------------
+# 1. GitHub repo -> Settings -> Actions -> Runners -> New self-hosted runner ->
+#    Linux / x64. Copy the download URL and the registration token shown there.
+# 2. Install and register:
+#      mkdir -p ~/actions-runner && cd ~/actions-runner
+#      curl -o runner.tar.gz -L <download URL from that page>
+#      tar xzf runner.tar.gz
+#      ./config.sh --url https://github.com/<owner>/<repo> --token <token> \
+#        --name paylens-ec2 --labels self-hosted --unattended
+# 3. Let ubuntu use Docker without sudo (skip if `docker ps` already works):
+#      sudo usermod -aG docker ubuntu     # then log out and back in
+# 4. Run it as a service so it survives logouts and reboots:
+#      sudo ./svc.sh install ubuntu
+#      sudo ./svc.sh start
+#      sudo ./svc.sh status
+# 5. The runner should show as "Idle" under Settings -> Actions -> Runners.
+#
+# The runner connects outbound to GitHub over 443; no inbound port is needed
+# for deploys.
 name: deploy to aws
 
 on:
@@ -33,81 +49,84 @@ on:
 permissions:
   contents: read
 
-# Never run two deploys against the same box at once.
+# Never run two deploys against the same box at once; a queued one waits.
 concurrency:
   group: deploy-ec2
   cancel-in-progress: false
 
+env:
+  APP_DIR: /home/ubuntu/projects/paylensv2
+  IMAGE: paylens
+  CONTAINER: paylens
+
+defaults:
+  run:
+    shell: bash
+    working-directory: /home/ubuntu/projects/paylensv2
+
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
+    timeout-minutes: 45
     steps:
-      - name: Build and restart on EC2
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          # The build generates the dataset and the views; on a t3.small that
-          # can take well over the default 10 minutes.
-          command_timeout: 30m
-          script: |
-            set -euo pipefail
-
-            APP_DIR=/home/ubuntu/projects/paylensv2
-            IMAGE=paylens
-            CONTAINER=paylens
-
-            cd "$APP_DIR"
-
-            # The container cannot start without its runtime config, and this
-            # workflow must never create or overwrite it.
-            if [ ! -f .env ]; then
-              echo "::error::$APP_DIR/.env is missing; create it on the instance first"
-              exit 1
-            fi
-
-            echo "==> pulling main"
-            git checkout main
-            git pull --ff-only origin main
-            echo "deploying $(git rev-parse --short HEAD)"
-
-            # Build before touching the running container: a failed build leaves
-            # the current version serving.
-            echo "==> building image"
-            docker build --build-arg WITH_KB=0 -t "$IMAGE" .
-
-            echo "==> replacing container"
-            docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-            docker run -d --name "$CONTAINER" --restart unless-stopped \
-              --env-file .env -p 80:8000 "$IMAGE"
-
-            # /health returns JSON such as
-            #   {"engine":"v2","views_built":true,"llm_available":true,...}
-            # It has no "status" field. views_built=true means the app started
-            # and found the views baked into the image.
-            echo "==> waiting for /health"
-            for i in $(seq 1 30); do
-              if BODY=$(curl -fsS --max-time 5 http://localhost/health 2>/dev/null) \
-                 && echo "$BODY" | grep -q '"views_built": *true'; then
-                echo "healthy: $BODY"
-                if ! echo "$BODY" | grep -q '"llm_available": *true'; then
-                  echo "::warning::llm_available is not true; check LLM_API_KEY in .env"
-                fi
-                # Drop the previous, now untagged image so the disk does not fill.
-                docker image prune -f >/dev/null
-                exit 0
-              fi
-              if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" != "true" ]; then
-                echo "::error::container is not running"
-                break
-              fi
-              sleep 5
-            done
-
-            echo "::error::health check failed"
-            echo "last /health response: ${BODY:-<none>}"
-            docker ps -a --filter "name=^${CONTAINER}$"
-            echo "==> docker logs (last 200 lines)"
-            docker logs --tail 200 "$CONTAINER" || true
+      # The container cannot start without its runtime config, and this
+      # workflow must never create or overwrite it.
+      - name: Check .env exists
+        run: |
+          if [ ! -f .env ]; then
+            echo "::error::$APP_DIR/.env is missing; create it on the instance first"
             exit 1
+          fi
+
+      - name: Pull main
+        run: |
+          git checkout main
+          git pull --ff-only origin main
+          echo "deploying $(git rev-parse --short HEAD)"
+
+      # Build before touching the running container: a failed build leaves the
+      # current version serving.
+      - name: Build image
+        run: docker build --build-arg WITH_KB=0 -t "$IMAGE" .
+
+      - name: Replace container
+        run: |
+          docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+          docker run -d --name "$CONTAINER" --restart unless-stopped \
+            --env-file .env -p 80:8000 "$IMAGE"
+
+      # /health returns JSON such as
+      #   {"engine":"v2","views_built":true,"llm_available":true,...}
+      # It has no "status" field. views_built=true means the app started and
+      # found the views baked into the image.
+      - name: Check /health
+        run: |
+          BODY=""
+          for i in $(seq 1 30); do
+            if BODY=$(curl -fsS --max-time 5 http://localhost/health 2>/dev/null) \
+               && echo "$BODY" | grep -q '"views_built": *true'; then
+              echo "healthy: $BODY"
+              if ! echo "$BODY" | grep -q '"llm_available": *true'; then
+                echo "::warning::llm_available is not true; check LLM_API_KEY in .env"
+              fi
+              exit 0
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" != "true" ]; then
+              echo "::error::container is not running"
+              break
+            fi
+            sleep 5
+          done
+          echo "::error::views_built is not true"
+          echo "last /health response: ${BODY:-<none>}"
+          exit 1
+
+      # Drop the previous, now untagged image so the disk does not fill.
+      - name: Prune old images
+        run: docker image prune -f
+
+      - name: Show container logs on failure
+        if: failure()
+        run: |
+          docker ps -a --filter "name=^${CONTAINER}$"
+          docker logs --tail 200 "$CONTAINER" || true
