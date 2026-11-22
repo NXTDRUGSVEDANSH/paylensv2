@@ -76,13 +76,20 @@ COPY --chown=paylens:paylens --from=builder /root/.cache/chroma        /home/pay
 USER paylens
 EXPOSE 8000
 
-# App Runner and ALB both poll this; it reports db + kb reachability, not just
-# "the process is alive".
-HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
-  CMD python -c "import os,urllib.request,json; \
+# App Runner and ALB both poll this. It asserts the container is SERVICEABLE,
+# not merely alive: `views_built` is what separates a process that is
+# listening from one that will refuse every question it receives.
+#
+# The previous version tested `status == 'ok'`. /health has never returned a
+# `status` field, so the expression was always false and every container would
+# have been marked unhealthy from the moment it started — and on ECS, where
+# the same check indexed the key directly, it raised KeyError and the task was
+# killed and replaced in a loop.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+  CMD python -c "import os,urllib.request,json,sys; \
 u=f'http://127.0.0.1:{os.getenv(\"PORT\",\"8000\")}/health'; \
 d=json.load(urllib.request.urlopen(u, timeout=4)); \
-raise SystemExit(0 if d.get('status')=='ok' else 1)"
+sys.exit(0 if d.get('views_built') else 1)"
 
 # One worker per container: the L0/L2 caches are in-process, so extra workers
 # would each keep a separate copy and cut the hit rate. Scale with tasks.

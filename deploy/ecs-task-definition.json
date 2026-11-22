@@ -30,7 +30,7 @@
         }
       ],
       "healthCheck": {
-        "command": ["CMD-SHELL", "python -c \"import urllib.request,json,sys; sys.exit(0 if json.load(urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=4))['status']=='ok' else 1)\""],
+        "command": ["CMD-SHELL", "python -c \"import urllib.request,json,sys; sys.exit(0 if json.load(urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=4)).get('views_built') else 1)\""],
         "interval": 30, "timeout": 5, "retries": 3, "startPeriod": 90
       },
       "logConfiguration": {
