@@ -212,13 +212,24 @@ def verify_superlatives(text: str, facts: list[Fact],
 
         # Which metric is this sentence about? Match on the metric's own
         # words, so "average ticket size" finds the `avg ticket` facts.
-        candidates = [(metric, who) for (metric, d), who in extremes.items()
-                      if d == direction and _mentions_metric(low, metric)]
-        if len(candidates) != 1:
-            # Nothing identifiable, or two metrics named at once. Either way
-            # there is no single truth to check against.
+        for_direction = [(metric, who) for (metric, d), who in extremes.items()
+                         if d == direction]
+        named_metric = [c for c in for_direction if _mentions_metric(low, c[0])]
+
+        if len(named_metric) == 1:
+            metric, truth = named_metric[0]
+        elif not named_metric and len(for_direction) == 1:
+            # The sentence names no metric, but the pack holds only one, so
+            # there is no ambiguity about what it is claiming. Requiring the
+            # name outright would have let "UPI was highest at 88.79%,
+            # followed by EMI" through — the self-contradicting sentence this
+            # check was written for.
+            metric, truth = for_direction[0]
+        else:
+            # Several measures and nothing to tell them apart. No single
+            # truth to judge against, and guessing would reject true
+            # sentences.
             continue
-        metric, truth = candidates[0]
 
         named = {l for l in labels
                  if re.search(rf"\b{re.escape(l.lower())}\b", low)}
