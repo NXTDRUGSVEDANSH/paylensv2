@@ -1,204 +1,146 @@
-# Deploying PayLens on AWS
+# Deploying PayLens on EC2
 
-The deployment is automated in `.github/workflows/deploy-aws.yml`: GitHub builds
-the image, pushes it to ECR, and rolls App Runner onto it. You need to do the
-one-time AWS setup below, after which deploying is a button in the Actions tab.
+Live at <http://ec2-54-159-33-138.compute-1.amazonaws.com/>
 
-Everything here is run **once**. Total time, first attempt: about 20 minutes.
+Push to `main` → GitHub Actions SSHes into the box → `git pull` → `docker build`
+→ restart the container. No registry, no OIDC, no AWS APIs: the box builds its
+own image from the code it just pulled, which is the least machinery that can
+work for one small service.
 
----
-
-## Why App Runner
-
-The container is immutable and stateless. The database is opened read-only, the
-analytical views and the definitional corpus are built into the image, and
-nothing written at runtime needs to survive a restart. That removes the usual
-reasons to reach for ECS: no volumes, no load balancer, no VPC, no task
-definitions. App Runner gives HTTPS and a hostname and nothing else to manage.
-
-Roughly **$25–45/month** at 1 vCPU / 2 GB, part of which is charged on
-provisioned memory even when idle.
-
-Do not go below 2 GB. chromadb and onnxruntime are resident before a query
-runs, which is why `DUCKDB_MEMORY_LIMIT` is 512MB — on a 2 GB task a larger
-budget risks the container being killed under load rather than returning a
-slow answer.
+The workflow is `.github/workflows/deploy-aws.yml`.
 
 ---
 
-## Prerequisites
+## What is on the box
 
-An AWS account, and the AWS CLI on the machine where you run the setup. You do
-**not** need Docker locally — GitHub's runners build the image.
+| | |
+|---|---|
+| Instance | `t3.small` (2 GB) — see the sizing note below |
+| User | `ubuntu` |
+| Project | `/home/ubuntu/projects/paylensv2` |
+| Image / container | `paylens` |
+| Ports | host `80` → container `8000` |
+| Secrets | `/home/ubuntu/projects/paylensv2/.env`, never touched by the deploy |
+
+**2 GB is the floor, not a preference.** The warm process measures ~465 MB, and
+DuckDB takes its configured budget on top. A 1 GB instance boots and then dies
+on the first real question.
+
+The image is built `--build-arg WITH_KB=0`, which leaves chromadb and
+onnxruntime out — roughly 600 MB less disk and 250 MB less RAM, and the reason
+this fits a `t3.small` at all. **That build requires `DISABLE_CHROMA=true` in
+`.env`**; without it the app reaches for a store that is not installed. The
+deploy checks for that line and fails early rather than shipping a container
+that starts and then misbehaves.
+
+What you give up: few-shot retrieval and the definitional corpus. Measurement,
+decomposition and advice are unaffected — verified by running the app with
+Chroma disabled and asking a question end to end.
+
+---
+
+## One-time setup on EC2
+
+A key dedicated to deployment, so it can be revoked without touching your own
+access.
 
 ```bash
-aws configure           # or `aws sso login` if your org uses SSO
-aws sts get-caller-identity    # should print your account id
-export ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-export REGION=ap-south-1
+# on the EC2 box, as ubuntu
+ssh-keygen -t ed25519 -C "github-actions-deploy" -f ~/.ssh/github_deploy -N ""
+cat ~/.ssh/github_deploy.pub >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+
+# this is what goes into the GitHub secret - the PRIVATE key, whole file
+cat ~/.ssh/github_deploy
 ```
 
----
-
-## 1 · Store the model API key
-
-Never an environment variable in plaintext. App Runner resolves this at
-container start.
+Confirm the rest is in place:
 
 ```bash
-aws secretsmanager create-secret \
-  --name paylens/llm-api-key \
-  --secret-string "sk-or-v1-YOUR-KEY" \
-  --region "$REGION"
+cd /home/ubuntu/projects/paylensv2
+git remote -v                     # should point at the GitHub repo
+git fetch origin main             # SSH auth to GitHub must already work
+test -f .env && echo ".env present"
+grep -q '^DISABLE_CHROMA=true' .env && echo "DISABLE_CHROMA set"
+docker ps                         # the ubuntu user must be in the docker group
 ```
 
-Note the returned `ARN` — it becomes the `LLM_API_KEY_SECRET_ARN` secret in
-step 4.
-
----
-
-## 2 · Let App Runner pull from ECR
-
-App Runner needs its own role to read your private registry.
+If `docker ps` needs `sudo`, add the user and reconnect — the deploy does not
+use `sudo`:
 
 ```bash
-aws iam create-role --role-name AppRunnerECRAccess \
-  --assume-role-policy-document '{
-    "Version":"2012-10-17",
-    "Statement":[{"Effect":"Allow",
-      "Principal":{"Service":"build.apprunner.amazonaws.com"},
-      "Action":"sts:AssumeRole"}]}'
-
-aws iam attach-role-policy --role-name AppRunnerECRAccess \
-  --policy-arn arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess
-
-echo "arn:aws:iam::$ACCOUNT:role/AppRunnerECRAccess"
+sudo usermod -aG docker ubuntu && exit
 ```
 
-That ARN becomes `AWS_ECR_ACCESS_ROLE_ARN` in step 4.
+Security group: allow inbound **80** from anywhere and **22** from your own
+address. Port 8000 need not be open; only the container binds it.
 
 ---
 
-## 3 · Let GitHub deploy, without storing a key
-
-GitHub mints a short-lived OIDC token and AWS trades it for temporary
-credentials scoped to one role. There is no long-lived access key to leak,
-rotate, or commit by accident — which is the main reason to prefer this over
-putting an access key in repository secrets.
-
-```bash
-# Register GitHub as an identity provider (once per account)
-aws iam create-open-id-connect-provider \
-  --url https://token.actions.githubusercontent.com \
-  --client-id-list sts.amazonaws.com \
-  --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
-
-# Trust ONLY this repository. The `sub` condition is what stops any other
-# repository on GitHub assuming your role.
-cat > /tmp/trust.json <<JSON
-{"Version":"2012-10-17","Statement":[{
-  "Effect":"Allow",
-  "Principal":{"Federated":"arn:aws:iam::$ACCOUNT:oidc-provider/token.actions.githubusercontent.com"},
-  "Action":"sts:AssumeRoleWithWebIdentity",
-  "Condition":{
-    "StringEquals":{"token.actions.githubusercontent.com:aud":"sts.amazonaws.com"},
-    "StringLike":{"token.actions.githubusercontent.com:sub":"repo:NXTDRUGSVEDANSH/paylensv2:*"}}}]}
-JSON
-
-aws iam create-role --role-name GitHubDeployPayLens \
-  --assume-role-policy-document file:///tmp/trust.json
-
-aws iam attach-role-policy --role-name GitHubDeployPayLens \
-  --policy-arn arn:aws:iam::aws:policy/AWSAppRunnerFullAccess
-aws iam attach-role-policy --role-name GitHubDeployPayLens \
-  --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser
-
-# App Runner's service role has to be passable by the deploy role
-aws iam put-role-policy --role-name GitHubDeployPayLens \
-  --policy-name PassAppRunnerRole \
-  --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{
-    \"Effect\":\"Allow\",\"Action\":\"iam:PassRole\",
-    \"Resource\":\"arn:aws:iam::$ACCOUNT:role/AppRunnerECRAccess\"}]}"
-
-echo "arn:aws:iam::$ACCOUNT:role/GitHubDeployPayLens"
-```
-
-That ARN becomes `AWS_DEPLOY_ROLE_ARN` in step 4.
-
-> The two managed policies above are broader than a deployment strictly needs.
-> Tighten them to the specific service and repository ARNs once the first
-> deploy has worked and you know exactly which calls it makes.
-
----
-
-## 4 · Add three secrets to GitHub
+## GitHub secrets
 
 **Settings → Secrets and variables → Actions → New repository secret**
 
 | Name | Value |
 |---|---|
-| `AWS_DEPLOY_ROLE_ARN` | the role from step 3 |
-| `AWS_ECR_ACCESS_ROLE_ARN` | the role from step 2 |
-| `LLM_API_KEY_SECRET_ARN` | the secret ARN from step 1 |
+| `EC2_HOST` | `ec2-54-159-33-138.compute-1.amazonaws.com` (or the public IPv4) |
+| `EC2_USER` | `ubuntu` |
+| `EC2_SSH_KEY` | the **private** key printed above — the entire file, including the `BEGIN`/`END` lines and the trailing newline |
+
+A truncated key is the single most common failure here, and it surfaces as a
+confusing handshake error rather than anything that mentions truncation.
 
 ---
 
-## 5 · Deploy
+## Testing it
 
-**Actions → deploy to aws → Run workflow.**
+**1 · Dry run on the box**, before trusting the pipeline. This is exactly what
+the workflow does:
 
-It builds the image (several minutes — the dataset is generated and verified
-inside the build), pushes it, creates the service on first run and updates it
-afterwards, then waits for `RUNNING` and checks the result.
+```bash
+cd /home/ubuntu/projects/paylensv2
+git pull
+docker build --build-arg WITH_KB=0 -t paylens .
+docker rm -f paylens 2>/dev/null || true
+docker run -d --name paylens --restart unless-stopped \
+  --env-file .env -p 80:8000 paylens
+curl -s http://localhost/health
+```
 
-The final step is the one worth keeping. It does not merely confirm the process
-is listening — it polls `/health` until `views_built` is `true`. A container
-that starts cleanly and then refuses every question because the views are
-missing is the failure this deployment has actually had, and a liveness check
-would have called it healthy.
+Expect `"views_built":true` and `"llm_available":true`. The first build takes
+several minutes — the dataset is generated and verified inside it.
 
-The service URL is printed in the workflow summary.
+**2 · Trigger the workflow manually.** Actions → *deploy to ec2* → Run
+workflow. Watch it pull, build, restart and report healthy.
 
----
+**3 · Push something trivial to `main`** and confirm it deploys on its own.
 
-## 6 · Lock down CORS
+**4 · Ask the service a real question**, which the health check does not cover:
 
-`CORS_ORIGINS` defaults to `*`, which is right for local work and wrong on the
-internet. Once you know the hostname, add it to
-`RuntimeEnvironmentVariables` in the workflow and re-run:
-
-```yaml
-"CORS_ORIGINS": "https://xxxxx.ap-south-1.awsapprunner.com"
+```bash
+curl -s -X POST http://ec2-54-159-33-138.compute-1.amazonaws.com/v2/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"what was the success rate last week","today":"2026-11-20"}'
 ```
 
 ---
 
-## What runs where
+## When it fails
 
-| | |
-|---|---|
-| Image build | GitHub runner, ~8–12 min (the dataset is generated and verified) |
-| Registry | ECR, private |
-| Runtime | App Runner, 1 vCPU / 2 GB, one uvicorn worker |
-| Model key | Secrets Manager, resolved at container start |
-| Database | baked into the image, read-only |
-| Demo accounts | SQLite, recreated on each boot — deliberately ephemeral |
-
-One worker per container is deliberate: the query cache is in-process, so a
-second worker would keep its own copy and halve the hit rate. Scale by adding
-instances, not workers.
-
-## When something is wrong
-
-`GET /health` is the first thing to read. It reports whether the views are
-built, whether a model is configured, and which tables are allowed — so it
-distinguishes "the deployment is wrong" from "the model is down", which the
-logs on their own do not.
+The workflow prints the last health response, the container logs and
+`docker ps -a` before exiting non-zero, so the Actions log usually contains the
+answer already.
 
 | Symptom | Cause |
 |---|---|
-| `views_built: false` | the image was built before the views step — rebuild |
-| `llm_available: false` | the secret ARN is wrong, or the role cannot read it |
-| container killed under load | memory; raise the instance before `DUCKDB_MEMORY_LIMIT` |
-| first request takes ~25s | the embedding model loading. Expected once per container |
-| `CREATE_FAILED` | almost always `AWS_ECR_ACCESS_ROLE_ARN` — App Runner could not pull |
+| `.env is missing on the host` | the file was moved or the path changed |
+| `must set DISABLE_CHROMA=true` | the image has no chromadb; add the line |
+| `views_built` false | the build did not create the views — read the build log |
+| `llm_available` false | `LLM_API_KEY` missing or wrong in `.env` |
+| SSH handshake fails | the secret is truncated, or the public key is not in `authorized_keys` |
+| build killed partway | memory. `t3.small` is the floor; builds are the peak |
+| port 80 refused | security group, or the container exited — check `docker ps -a` |
+
+Health is deliberately `views_built` rather than "the process responded". A
+container that boots cleanly and then refuses every question is a failure this
+deployment has actually had, and a liveness check calls it healthy.

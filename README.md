@@ -3,6 +3,13 @@
 **An auditable business analyst for payments.** Ask a question in plain English and
 get an answer whose every number traces back to a query you can read.
 
+### → **[Try it live](http://ec2-54-159-33-138.compute-1.amazonaws.com/)**
+
+<http://ec2-54-159-33-138.compute-1.amazonaws.com/>
+
+Sign-in is optional. It changes which rows your question is allowed to touch, and
+you can watch the restriction appear in the SQL tab of the answer.
+
 Built for the Pine Labs *Enterprise AI Business Analyst* assignment.
 
 ---
@@ -233,6 +240,9 @@ rather than judged — and the response time is what those checks cost.
   question set, caching disabled — but the model is not deterministic, so expect small movement.
 
 ---
+
+Running at <http://ec2-54-159-33-138.compute-1.amazonaws.com/>, deployed from `main`
+on every push.
 
 Setup, commands and the API are in [SETUP.md](SETUP.md). The evaluation method and every metric
 definition are in [evaluation/METRICS.md](evaluation/METRICS.md).
