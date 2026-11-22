@@ -1,18 +1,20 @@
-# Build the image on GitHub, push it to ECR, and roll App Runner onto it.
+# Deploy PayLens to a single EC2 box over SSH.
 #
-# WHY THIS EXISTS RATHER THAN A LOCAL SCRIPT
-# ------------------------------------------
-# The image bakes the dataset, the analytical views and the embedding model, so
-# building it needs Docker and several GB of scratch space. Doing that on a
-# laptop means everyone who deploys needs the same toolchain and the same
-# version of it. GitHub's runners already have Docker, and the credentials stay
-# in GitHub rather than on anyone's disk.
+#   push to main -> GitHub Actions -> SSH into EC2 -> git pull -> docker build
+#   -> replace the container -> check /health
 #
-# AUTHENTICATION USES OIDC, NOT STORED KEYS
-# -----------------------------------------
-# GitHub mints a short-lived token and AWS trades it for temporary credentials
-# scoped to one role. There is no long-lived access key to leak, rotate or
-# accidentally commit. Setup is in docs/AWS-DEPLOY.md.
+# The image is built on the EC2 instance itself, so no registry and no AWS
+# credentials are involved. GitHub only needs an SSH key.
+#
+# Required repository secrets:
+#   EC2_HOST     public IPv4 address of the instance
+#   EC2_USER     ubuntu
+#   EC2_SSH_KEY  private key dedicated to this workflow (its public half is in
+#                ~/.ssh/authorized_keys on the instance)
+#
+# The runtime .env lives only on the instance, at
+# /home/ubuntu/projects/paylensv2/.env. It is git-ignored, so `git pull` never
+# touches it, and this workflow only passes it to `docker run --env-file`.
 name: deploy to aws
 
 on:
@@ -29,134 +31,83 @@ on:
       - '.github/workflows/deploy-aws.yml'
 
 permissions:
-  id-token: write             # required for OIDC
   contents: read
 
-env:
-  AWS_REGION: ap-south-1
-  ECR_REPOSITORY: paylens
-  APPRUNNER_SERVICE: paylens
+# Never run two deploys against the same box at once.
+concurrency:
+  group: deploy-ec2
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Assume the deploy role
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Build and restart on EC2
+        uses: appleboy/ssh-action@v1
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          # The build generates the dataset and the views; on a t3.small that
+          # can take well over the default 10 minutes.
+          command_timeout: 30m
+          script: |
+            set -euo pipefail
 
-      - id: ecr
-        uses: aws-actions/amazon-ecr-login@v2
+            APP_DIR=/home/ubuntu/projects/paylensv2
+            IMAGE=paylens
+            CONTAINER=paylens
 
-      - name: Create the ECR repository if it does not exist
-        run: |
-          aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" \
-            --region "$AWS_REGION" >/dev/null 2>&1 \
-          || aws ecr create-repository --repository-name "$ECR_REPOSITORY" \
-               --region "$AWS_REGION" --image-scanning-configuration scanOnPush=true
+            cd "$APP_DIR"
 
-      - name: Build and push
-        env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}
-        run: |
-          IMAGE="$REGISTRY/$ECR_REPOSITORY"
-          # linux/amd64 explicitly. An arm64 image pulls fine on x86 Fargate and
-          # then fails to start, with an error that does not mention architecture.
-          docker build --platform linux/amd64 \
-            -t "$IMAGE:${GITHUB_SHA::7}" -t "$IMAGE:latest" .
-          docker push "$IMAGE:${GITHUB_SHA::7}"
-          docker push "$IMAGE:latest"
-          echo "IMAGE_URI=$IMAGE:${GITHUB_SHA::7}" >> "$GITHUB_ENV"
-
-      - name: Create or update the App Runner service
-        run: |
-          ARN=$(aws apprunner list-services --region "$AWS_REGION" \
-                  --query "ServiceSummaryList[?ServiceName=='$APPRUNNER_SERVICE'].ServiceArn" \
-                  --output text)
-
-          # The key is read from Secrets Manager at container start, never
-          # baked into the image and never an env var in plaintext.
-          SECRET_ARN="${{ secrets.LLM_API_KEY_SECRET_ARN }}"
-
-          CONFIG=$(cat <<JSON
-          {
-            "ImageRepository": {
-              "ImageIdentifier": "$IMAGE_URI",
-              "ImageRepositoryType": "ECR",
-              "ImageConfiguration": {
-                "Port": "8000",
-                "RuntimeEnvironmentVariables": {
-                  "DUCKDB_PATH": "/app/data/paylens.duckdb",
-                  "CHROMA_PATH": "/app/data/chroma_db",
-                  "DUCKDB_MEMORY_LIMIT": "512MB",
-                  "MAX_SQL_ROWS": "5000",
-                  "SQL_TIMEOUT_S": "10"
-                },
-                "RuntimeEnvironmentSecrets": {
-                  "LLM_API_KEY": "$SECRET_ARN"
-                }
-              }
-            },
-            "AutoDeploymentsEnabled": false,
-            "AuthenticationConfiguration": {
-              "AccessRoleArn": "${{ secrets.AWS_ECR_ACCESS_ROLE_ARN }}"
-            }
-          }
-          JSON
-          )
-
-          if [ -z "$ARN" ]; then
-            echo "creating $APPRUNNER_SERVICE"
-            aws apprunner create-service --region "$AWS_REGION" \
-              --service-name "$APPRUNNER_SERVICE" \
-              --source-configuration "$CONFIG" \
-              --instance-configuration 'Cpu=1024,Memory=2048' \
-              --health-check-configuration \
-                 'Protocol=HTTP,Path=/health,Interval=20,Timeout=5,HealthyThreshold=1,UnhealthyThreshold=5'
-            ARN=$(aws apprunner list-services --region "$AWS_REGION" \
-                    --query "ServiceSummaryList[?ServiceName=='$APPRUNNER_SERVICE'].ServiceArn" \
-                    --output text)
-          else
-            echo "updating $APPRUNNER_SERVICE"
-            aws apprunner update-service --region "$AWS_REGION" \
-              --service-arn "$ARN" --source-configuration "$CONFIG"
-          fi
-
-          echo "waiting for the service to settle"
-          for i in $(seq 1 40); do
-            STATUS=$(aws apprunner describe-service --region "$AWS_REGION" \
-                       --service-arn "$ARN" --query 'Service.Status' --output text)
-            echo "  $STATUS"
-            case "$STATUS" in
-              RUNNING) break ;;
-              CREATE_FAILED|DELETE_FAILED) echo "::error::service is $STATUS"; exit 1 ;;
-            esac
-            sleep 15
-          done
-
-          URL=$(aws apprunner describe-service --region "$AWS_REGION" \
-                  --service-arn "$ARN" --query 'Service.ServiceUrl' --output text)
-          echo "### PayLens deployed" >> "$GITHUB_STEP_SUMMARY"
-          echo "https://$URL" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Check it actually answers
-        run: |
-          ARN=$(aws apprunner list-services --region "$AWS_REGION" \
-                  --query "ServiceSummaryList[?ServiceName=='$APPRUNNER_SERVICE'].ServiceArn" \
-                  --output text)
-          URL=$(aws apprunner describe-service --region "$AWS_REGION" \
-                  --service-arn "$ARN" --query 'Service.ServiceUrl' --output text)
-          # /health reports whether the views are built and a model is wired up,
-          # not merely that the process is listening — which is the failure this
-          # deployment has actually had before.
-          for i in $(seq 1 10); do
-            if curl -fsS "https://$URL/health" | tee /tmp/h.json | grep -q '"views_built": *true'; then
-              echo "healthy:"; cat /tmp/h.json; exit 0
+            # The container cannot start without its runtime config, and this
+            # workflow must never create or overwrite it.
+            if [ ! -f .env ]; then
+              echo "::error::$APP_DIR/.env is missing; create it on the instance first"
+              exit 1
             fi
-            sleep 10
-          done
-          echo "::error::service did not report views_built=true"; cat /tmp/h.json || true; exit 1
+
+            echo "==> pulling main"
+            git checkout main
+            git pull --ff-only origin main
+            echo "deploying $(git rev-parse --short HEAD)"
+
+            # Build before touching the running container: a failed build leaves
+            # the current version serving.
+            echo "==> building image"
+            docker build --build-arg WITH_KB=0 -t "$IMAGE" .
+
+            echo "==> replacing container"
+            docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+            docker run -d --name "$CONTAINER" --restart unless-stopped \
+              --env-file .env -p 80:8000 "$IMAGE"
+
+            # /health returns JSON such as
+            #   {"engine":"v2","views_built":true,"llm_available":true,...}
+            # It has no "status" field. views_built=true means the app started
+            # and found the views baked into the image.
+            echo "==> waiting for /health"
+            for i in $(seq 1 30); do
+              if BODY=$(curl -fsS --max-time 5 http://localhost/health 2>/dev/null) \
+                 && echo "$BODY" | grep -q '"views_built": *true'; then
+                echo "healthy: $BODY"
+                if ! echo "$BODY" | grep -q '"llm_available": *true'; then
+                  echo "::warning::llm_available is not true; check LLM_API_KEY in .env"
+                fi
+                # Drop the previous, now untagged image so the disk does not fill.
+                docker image prune -f >/dev/null
+                exit 0
+              fi
+              if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" != "true" ]; then
+                echo "::error::container is not running"
+                break
+              fi
+              sleep 5
+            done
+
+            echo "::error::health check failed"
+            echo "last /health response: ${BODY:-<none>}"
+            docker ps -a --filter "name=^${CONTAINER}$"
+            echo "==> docker logs (last 200 lines)"
+            docker logs --tail 200 "$CONTAINER" || true
+            exit 1
