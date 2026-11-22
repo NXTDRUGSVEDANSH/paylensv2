@@ -35,12 +35,45 @@ class Principal:
 
 @dataclass(frozen=True)
 class ScopePredicate:
-    table: str
-    column: str
+    """
+    A row filter, anchored on a table the query is guaranteed to contain.
+
+    The subtlety that made the first implementation unsafe: a scope defined on a
+    DIMENSION table (region lives on dim_merchant) can only be injected if that
+    table is in the query. "success rate by payment method" joins
+    dim_payment_method and never dim_merchant — so no predicate was injected and
+    a regional manager saw every region.
+
+    Fixing it by injecting a JOIN would mean rewriting arbitrary FROM clauses. A
+    semi-join on the FACT table is equivalent, always applicable, and much harder
+    to get wrong:
+
+        fact_transactions.merchant_id IN
+            (SELECT merchant_id FROM dim_merchant WHERE region = 'South')
+    """
+    table: str                      # the ANCHOR table — always present in the query
+    column: str                     # the anchor's key column
     value: str
+    # Set when the scope lives on a dimension table reached via a key.
+    lookup_table: str | None = None
+    lookup_key: str | None = None
+    lookup_column: str | None = None
+
+    @property
+    def is_semijoin(self) -> bool:
+        return self.lookup_table is not None
 
     def sql(self, alias: str | None = None) -> str:
-        return f"{alias or self.table}.{self.column} = '{self.value}'"
+        ref = f"{alias or self.table}.{self.column}"
+        if self.is_semijoin:
+            return (f"{ref} IN (SELECT {self.lookup_key} FROM {self.lookup_table} "
+                    f"WHERE {self.lookup_column} = '{self.value}')")
+        return f"{ref} = '{self.value}'"
+
+    def describe(self) -> str:
+        if self.is_semijoin:
+            return f"{self.lookup_table}.{self.lookup_column} = '{self.value}'"
+        return f"{self.table}.{self.column} = '{self.value}'"
 
 
 def principal_for(role: str, claims: dict[str, str] | None = None) -> Principal:
@@ -59,13 +92,28 @@ def row_predicates(p: Principal, model: SemanticModel) -> list[ScopePredicate]:
         raise PermissionError(
             f"role '{p.role}' requires claim '{claim_key}' but it was not supplied")
 
+    anchor = scope.get("anchor_table", "fact_transactions")
     dim_id = scope["dimension"]
+
     if dim_id in model.dimensions:
         d = model.dimension(dim_id)
-        return [ScopePredicate(table=d.table, column=d.column, value=value)]
-    # Not a modelled dimension — a raw column on a named table (e.g. merchant_id).
-    return [ScopePredicate(table=scope.get("table", "fact_transactions"),
-                           column=dim_id, value=value)]
+        if d.table == anchor:
+            # The scope column is on the fact table itself: a direct equality.
+            return [ScopePredicate(table=anchor, column=d.column, value=value)]
+        # The scope lives on a dimension table. Anchor a semi-join on the fact
+        # table so the filter applies whether or not that dimension is joined.
+        join = model.join_path(anchor, d.table)
+        if join is None:
+            raise PermissionError(
+                f"role '{p.role}' is scoped by '{dim_id}' on {d.table}, but the "
+                f"semantic model declares no join from {anchor} — the scope cannot "
+                f"be enforced, so the request is refused rather than run unscoped")
+        return [ScopePredicate(table=anchor, column=join.left_on, value=value,
+                               lookup_table=d.table, lookup_key=join.right_on,
+                               lookup_column=d.column)]
+
+    # Not a modelled dimension — a raw column on the anchor table.
+    return [ScopePredicate(table=scope.get("table", anchor), column=dim_id, value=value)]
 
 
 def masked_columns(p: Principal, model: SemanticModel) -> set[str]:
@@ -203,16 +251,25 @@ def assert_injected(root: exp.Expression, preds: list[ScopePredicate]) -> tuple[
             want = f"{(alias or pred.table).lower()}.{pred.column.lower()}"
             ok = False
             for c in cs:
-                if not isinstance(c, exp.EQ):
-                    continue
-                col = c.this
+                col = c.this if isinstance(c, (exp.EQ, exp.In)) else None
                 if not isinstance(col, exp.Column):
                     continue
                 got = f"{(col.table or pred.table).lower()}.{col.name.lower()}"
-                lit = c.expression
-                if got == want and isinstance(lit, exp.Literal) and lit.this == pred.value:
-                    ok = True
-                    break
+                if got != want:
+                    continue
+                if isinstance(c, exp.EQ):
+                    lit = c.expression
+                    if isinstance(lit, exp.Literal) and lit.this == pred.value:
+                        ok = True
+                        break
+                elif isinstance(c, exp.In) and pred.is_semijoin:
+                    # The value lives inside the sub-select; confirm both the
+                    # lookup table and the literal are present in that subtree.
+                    sub = c.sql().lower()
+                    if (pred.lookup_table.lower() in sub
+                            and f"'{pred.value}'".lower() in sub):
+                        ok = True
+                        break
             if not ok:
                 return False, (f"RBAC predicate {pred.column}='{pred.value}' is missing or "
                                f"not a top-level conjunct on {pred.table} (alias {alias})")

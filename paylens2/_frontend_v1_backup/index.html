@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PayLens v2</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='%2350D387'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Epilogue:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head><body>
+
+<header>
+  <div class="brand">
+    <span class="mark"></span>
+    <div>
+      <h1>PayLens <span class="v2">v2</span></h1>
+      <p class="tag">The model writes the SQL. The guard decides whether it runs.</p>
+    </div>
+  </div>
+  <div class="hdr-right">
+    <span id="who" class="who"></span>
+    <button id="theme" class="ghost tiny" title="Light or dark">◐</button>
+  </div>
+</header>
+
+<div id="health" class="health"></div>
+
+<div class="layout">
+
+  <!-- ── left rail ──────────────────────────────────────────────────── -->
+  <aside>
+    <section class="panel">
+      <div class="panel-h">
+        <h3>Conversations</h3>
+        <button class="ghost tiny" id="newconv" title="Start a fresh thread">+ new</button>
+      </div>
+      <div class="panel-b">
+        <div id="convlist" class="convlist"></div>
+        <p class="hint">The last 5 threads are kept. A follow-up inherits the
+          period, filters and breakdown of the turn before it — nothing carries
+          across a new thread or a change of role.</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h">
+        <h3>Account</h3>
+        <button class="ghost tiny" id="signtoggle">sign in</button>
+      </div>
+      <div class="panel-b">
+        <div id="acctstate"></div>
+        <form id="loginform" autocomplete="on" hidden>
+          <label for="u">Username</label>
+          <input id="u" name="username" autocomplete="username" required>
+          <label for="pw">Password</label>
+          <input id="pw" name="password" type="password" autocomplete="current-password" required>
+          <div id="loginerr" class="err" hidden></div>
+          <button class="primary wide" type="submit" id="loginbtn">Sign in</button>
+          <div id="demousers"></div>
+        </form>
+      </div>
+    </section>
+  </aside>
+
+  <!-- ── main ───────────────────────────────────────────────────────── -->
+  <main>
+    <section class="panel ask">
+      <div class="panel-b">
+        <textarea id="q" rows="2"
+          placeholder="Ask anything about payment performance…"
+          aria-label="Your question"></textarea>
+        <div class="askrow">
+          <button class="primary" id="go">Ask</button>
+          <span id="ctx" class="ctxnote"></span>
+        </div>
+      </div>
+    </section>
+
+    <div class="chips" id="chips"></div>
+
+    <div id="thread"></div>
+
+    <section id="empty" class="empty">
+      <h2>What is different here</h2>
+      <div class="grid">
+        <div><b>No vocabulary list.</b> v1 refused any question containing a word
+          nobody had typed into a 250-word frozenset — <i>sales</i>, <i>money</i>,
+          <i>outage</i>. There is no such list here.</div>
+        <div><b>It asks back, or refuses.</b> Instead of five fixed metric
+          buttons, you get a question that fits what you asked, or a plain
+          statement that this dataset holds no chargeback data.</div>
+        <div><b>Same guard, same numbers.</b> Model-written SQL passes the same
+          nine checks, access filter included. The views carry the
+          de-duplication and the official formulas, so v1 and v2 agree.</div>
+        <div><b>Python computes, the model writes.</b> Every figure in the prose
+          is checked against a measured fact pack. One invented number and the
+          whole composition is discarded.</div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- charts.js reads --s1..--s7 off :root and writes into #tip. -->
+<div id="tip" role="status" aria-live="polite"></div>
+<script src="/shared/charts.js"></script>
+<script src="app.js"></script>
+</body></html>

@@ -1,0 +1,14 @@
+# Additional gold SQL beyond the 19 reused from eval/golden.yaml.
+#
+# Shape matches golden.yaml so the two are interchangeable:
+#   gold:
+#     <gold_sql_id>:
+#       sql:   |
+#         SELECT ...
+#       kind:  scalar | set
+#       scale: ratio | percent | exact   # what THIS query returns
+#
+# `scale` is load-bearing: v2 renders a ratio metric as a percent (86.60) and
+# these references return the ratio (0.8660). Stating it removes the guess that
+# eval/run.py made with `if want < 1: want *= 100`.
+gold: {}

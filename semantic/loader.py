@@ -34,6 +34,11 @@ class Metric:
     numerator: str | None = None
     denominator: str | None = None
     denominator_note: str | None = None
+    # Tables this metric's SQL references besides its own base. A metric that
+    # classifies failures has to reach dim_failure_code even when nobody grouped
+    # by it, and the compiler only joins tables it can see a reason for — so the
+    # reason is declared here rather than discovered by string-matching the expr.
+    requires_join: tuple[str, ...] = ()
 
     @property
     def is_ratio(self) -> bool:
@@ -54,6 +59,7 @@ class Dimension:
     null_label: str | None = None
     expected_cardinality: int | None = None
     implies_filter: str | None = None
+    implies_metric: str | None = None
 
     @property
     def sql(self) -> str:
@@ -161,15 +167,33 @@ class SemanticModel:
                 out.append(key)
         return out
 
+    def match_all(self, text: str) -> tuple[list[str], list[str]]:
+        """
+        Resolve metrics AND dimensions in ONE span-competitive pass.
+
+        Running them as two independent passes lets both claim the same words:
+        "failure rate by payment method" gave the `failure_rate` metric (matching
+        "failure rate") *and* the `failure_category` dimension (matching
+        "failure"), which silently added a GROUP BY and a join that the question
+        never asked for.
+
+        A phrase refers to one thing. Longest match wins, whether the winner is a
+        metric or a dimension.
+        """
+        cands: dict[str, tuple[str, ...]] = {}
+        for m in self.metrics.values():
+            cands[f"m:{m.id}"] = (m.id.replace("_", " "), m.label.lower(), *m.synonyms)
+        for d in self.dimensions.values():
+            cands[f"d:{d.id}"] = (d.id.replace("_", " "), d.label.lower(), *d.synonyms)
+        won = self._match(text, cands)
+        return ([k[2:] for k in won if k.startswith("m:")],
+                [k[2:] for k in won if k.startswith("d:")])
+
     def match_metrics(self, text: str) -> list[str]:
-        return self._match(text, {
-            m.id: (m.id.replace("_", " "), m.label.lower(), *m.synonyms)
-            for m in self.metrics.values()})
+        return self.match_all(text)[0]
 
     def match_dimensions(self, text: str) -> list[str]:
-        return self._match(text, {
-            d.id: (d.id.replace("_", " "), d.label.lower(), *d.synonyms)
-            for d in self.dimensions.values()})
+        return self.match_all(text)[1]
 
     def tables_for(self, metric_ids: list[str], dimension_ids: list[str]) -> set[str]:
         tabs = {self.metric(m).base for m in metric_ids}
@@ -254,7 +278,8 @@ def load(path: Path | str | None = None) -> SemanticModel:
         decomposable=bool(v.get("decomposable", False)),
         higher_is_better=v.get("higher_is_better"), synonyms=_tup(v.get("synonyms")),
         expr=v.get("expr"), numerator=v.get("numerator"), denominator=v.get("denominator"),
-        denominator_note=v.get("denominator_note")) for k, v in raw["metrics"].items()}
+        denominator_note=v.get("denominator_note"),
+        requires_join=_tup(v.get("requires_join"))) for k, v in raw["metrics"].items()}
 
     dimensions = {k: Dimension(
         id=k, label=v.get("label", k), table=v["table"], column=v["column"],
@@ -262,7 +287,8 @@ def load(path: Path | str | None = None) -> SemanticModel:
         join_via=v.get("join_via"), rbac_scope=bool(v.get("rbac_scope", False)),
         nullable=bool(v.get("nullable", False)), null_label=v.get("null_label"),
         expected_cardinality=v.get("expected_cardinality"),
-        implies_filter=v.get("implies_filter")) for k, v in raw["dimensions"].items()}
+        implies_filter=v.get("implies_filter"),
+        implies_metric=v.get("implies_metric")) for k, v in raw["dimensions"].items()}
 
     joins = tuple(Join(**j) for j in raw["joins"])
     roles = {k: RoleDef(

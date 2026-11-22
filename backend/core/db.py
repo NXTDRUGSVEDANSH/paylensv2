@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 import duckdb
+from pathlib import Path
 
 from backend import config
 
@@ -22,7 +23,14 @@ def connect() -> duckdb.DuckDBPyConnection:
             if not config.DUCKDB_PATH.exists():
                 raise FileNotFoundError(
                     f"{config.DUCKDB_PATH} not found — run `python data/generate.py` first")
-            _con = duckdb.connect(str(config.DUCKDB_PATH), read_only=True, config={"memory_limit": "256MB"})
+            Path(config.DUCKDB_TEMP_DIR).mkdir(parents=True, exist_ok=True)
+            _con = duckdb.connect(
+                str(config.DUCKDB_PATH), read_only=True,
+                config={"memory_limit": config.DUCKDB_MEMORY_LIMIT,
+                        # Read-only does not imply no scratch space. See
+                        # config.DUCKDB_TEMP_DIR for why leaving this unset turns
+                        # a tight memory budget into intermittent query failures.
+                        "temp_directory": config.DUCKDB_TEMP_DIR})
         return _con
 
 

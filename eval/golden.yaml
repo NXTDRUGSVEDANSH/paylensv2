@@ -17,8 +17,11 @@ window: &lw "txn_ts >= '2026-11-09' AND txn_ts < '2026-11-16'"
 month: &oct "txn_ts >= '2026-10-01' AND txn_ts < '2026-11-01'"
 
 questions:
+  # Deliberately names a period: the golden set measures ANSWER correctness.
+  # The no-period case is tested in the `ambiguity` section, where asking back
+  # is the expected behaviour.
   - id: g01
-    q: "what is our success rate"
+    q: "what is our success rate last week"
     seeded: true
     kind: scalar
     tables: [fact_transactions]
@@ -243,6 +246,81 @@ questions:
       WHERE txn_ts >= '2026-10-01' AND txn_ts < '2026-11-01'
         AND merchant_id = 'M-1042'
 
+  # ── the payment journey ────────────────────────────────────────────────────
+  # Four questions the flat failure-code table could not answer at all. They are
+  # here so the journey dimensions are MEASURED, not merely declared: a dimension
+  # that resolves but compiles to the wrong SQL still produces a plausible number.
+  - id: g16
+    q: "failures by journey step last week"
+    seeded: false
+    kind: set
+    key: journey_step
+    value: txn_count
+    tables: [fact_transactions, dim_failure_code]
+    reference_sql: |
+      SELECT fc.journey_step_label AS k, count(*)::DOUBLE AS v
+      FROM (SELECT * FROM fact_transactions
+            QUALIFY row_number() OVER (PARTITION BY txn_id ORDER BY ingested_at DESC)=1) t
+      JOIN dim_failure_code fc ON fc.failure_code = t.failure_code
+      WHERE t.txn_ts >= '2026-11-09' AND t.txn_ts < '2026-11-16'
+        AND t.status = 'FAILED'
+      GROUP BY 1
+
+  # Needs the metric-level join declaration: nothing in this question names a
+  # failure dimension, yet the SQL must still reach dim_failure_code.
+  - id: g17
+    q: "technical decline rate by payment method last week"
+    seeded: false
+    kind: set
+    key: payment_method
+    value: technical_decline_rate
+    tables: [fact_transactions, dim_failure_code, dim_payment_method]
+    reference_sql: |
+      SELECT pm.method AS k,
+             (count(*) FILTER (WHERE t.status='FAILED' AND fc.decline_type='technical'))::DOUBLE
+             / count(*) FILTER (WHERE t.status IN ('SUCCESS','FAILED')) AS v
+      FROM (SELECT * FROM fact_transactions
+            QUALIFY row_number() OVER (PARTITION BY txn_id ORDER BY ingested_at DESC)=1) t
+      LEFT JOIN dim_failure_code fc ON fc.failure_code = t.failure_code
+      LEFT JOIN dim_payment_method pm ON pm.pm_id = t.pm_id
+      WHERE t.txn_ts >= '2026-11-09' AND t.txn_ts < '2026-11-16'
+      GROUP BY 1
+
+  - id: g18
+    q: "success rate by entry mode last week"
+    seeded: false
+    kind: set
+    key: entry_mode
+    value: success_rate
+    tables: [fact_transactions]
+    reference_sql: |
+      SELECT t.entry_mode AS k,
+             (count(*) FILTER (WHERE t.status='SUCCESS'))::DOUBLE
+             / count(*) FILTER (WHERE t.status IN ('SUCCESS','FAILED')) AS v
+      FROM (SELECT * FROM fact_transactions
+            QUALIFY row_number() OVER (PARTITION BY txn_id ORDER BY ingested_at DESC)=1) t
+      WHERE t.txn_ts >= '2026-11-09' AND t.txn_ts < '2026-11-16'
+      GROUP BY 1
+
+  # Crosses from the fact table into the terminal estate — the join that did not
+  # exist before, on the table whose alias collided with every other dim_*.
+  - id: g19
+    q: "failure rate by terminal connectivity last week"
+    seeded: false
+    kind: set
+    key: connectivity
+    value: failure_rate
+    tables: [fact_transactions, dim_terminal]
+    reference_sql: |
+      SELECT term.connectivity AS k,
+             (count(*) FILTER (WHERE t.status='FAILED'))::DOUBLE
+             / count(*) FILTER (WHERE t.status IN ('SUCCESS','FAILED')) AS v
+      FROM (SELECT * FROM fact_transactions
+            QUALIFY row_number() OVER (PARTITION BY txn_id ORDER BY ingested_at DESC)=1) t
+      LEFT JOIN dim_terminal term ON term.terminal_id = t.terminal_id
+      WHERE t.txn_ts >= '2026-11-09' AND t.txn_ts < '2026-11-16'
+      GROUP BY 1
+
 # ── decomposition: the headline capability, checked numerically ─────────────
 decomposition:
   - id: d01
@@ -262,3 +340,32 @@ ambiguity:
   - { id: a03, q: "success rate",                       expect_kinds: [time_window, denominator] }
   - { id: a04, q: "show me gmv",                        expect_kinds: [time_window] }
   - { id: a05, q: "what happened this week",            expect_kinds: [time_window] }
+
+# ── theoretical questions ───────────────────────────────────────────────────
+# Questions with no computable answer. What is measured here is not a number —
+# it is that the question reached the advisory path at all, and that every
+# figure in the prose it produced was measured rather than remembered. A
+# fabricated benchmark is the failure this measure exists to catch, so a run
+# that scores 100% on everything else and less than 100% here has shipped the
+# worst defect in the list.
+advisory:
+  - id: a1
+    q: "How do I improve my success rate?"
+    expect_kind: recommendation
+    needs_levers: true
+  - id: a2
+    q: "What is a technical decline?"
+    expect_kind: definition
+    needs_levers: false
+  - id: a3
+    q: "Is 86% a good success rate?"
+    expect_kind: benchmark
+    needs_levers: true
+  - id: a4
+    q: "Should I retry failed payments?"
+    expect_kind: recommendation
+    needs_levers: true
+  - id: a5
+    q: "What does NPCI TD mean?"
+    expect_kind: definition
+    needs_levers: false

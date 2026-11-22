@@ -1,25 +1,81 @@
-FROM python:3.12-slim
+# syntax=docker/dockerfile:1.7
+# ──────────────────────────────────────────────────────────────────────────────
+# PayLens — immutable, stateless container.
+#
+# The whole app can be baked: DuckDB is opened READ-ONLY and the Chroma cache is
+# deterministic from semantic/seeds.yaml, so data and cache are build artifacts,
+# not runtime state. That means no EFS, no RDS, no volume — scale by adding tasks.
+#
+#   docker build -t paylens .                        # full (with semantic cache)
+#   docker build -t paylens --build-arg WITH_KB=0 .  # slim, ~270 MB smaller
+# ──────────────────────────────────────────────────────────────────────────────
+ARG PYTHON_VERSION=3.12-slim-bookworm
 
+# ── stage 1: build the data and the cache ────────────────────────────────────
+FROM python:${PYTHON_VERSION} AS builder
+ARG WITH_KB=1
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1
+WORKDIR /build
+
+# Generator deps (pandas/pyarrow/numpy) live ONLY in this stage.
+COPY requirements.txt requirements-kb.txt ./
+RUN pip install --no-cache-dir -r requirements.txt \
+ && if [ "$WITH_KB" = "1" ]; then pip install --no-cache-dir -r requirements-kb.txt; fi
+
+COPY data/ ./data/
+COPY semantic/ ./semantic/
+COPY backend/ ./backend/
+COPY paylens2/ ./paylens2/
+
+# Deterministic: seed=42. Verified in the same layer, so a build FAILS rather
+# than shipping a dataset whose calibration has drifted.
+RUN python data/generate.py && python data/verify.py
+
+# Pre-seed Chroma AND warm the ONNX model into ~/.cache/chroma, so no container
+# ever downloads a 167 MB model on its first user request.
+ENV CHROMA_PATH=/build/data/chroma_db
+RUN if [ "$WITH_KB" = "1" ]; then \
+      python -c "import sys; sys.path.insert(0,'.'); \
+from semantic.loader import get_model; from backend.kb import seed, store; \
+store.warm(); print(seed.seed(get_model(), force=True))"; \
+    else mkdir -p /build/data/chroma_db && mkdir -p /root/.cache/chroma; fi
+
+# ── stage 2: runtime ─────────────────────────────────────────────────────────
+FROM python:${PYTHON_VERSION} AS runtime
+ARG WITH_KB=1
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1 \
+    PORT=8000 \
+    DUCKDB_PATH=/app/data/paylens.duckdb \
+    CHROMA_PATH=/app/data/chroma_db
+
+RUN useradd --create-home --uid 10001 paylens
 WORKDIR /app
 
-# Install build essentials for native extensions (duckdb, chromadb)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+COPY requirements-runtime.txt requirements-kb.txt ./
+RUN pip install --no-cache-dir -r requirements-runtime.txt \
+ && if [ "$WITH_KB" = "1" ]; then pip install --no-cache-dir -r requirements-kb.txt; \
+    else echo "DISABLE_CHROMA=true recommended for this build"; fi
 
-# Copy and install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --chown=paylens:paylens backend/   ./backend/
+COPY --chown=paylens:paylens paylens2/  ./paylens2/
+COPY --chown=paylens:paylens semantic/  ./semantic/
+COPY --chown=paylens:paylens eval/      ./eval/
+COPY --chown=paylens:paylens --from=builder /build/data/paylens.duckdb ./data/paylens.duckdb
+COPY --chown=paylens:paylens --from=builder /build/data/chroma_db      ./data/chroma_db
+COPY --chown=paylens:paylens --from=builder /root/.cache/chroma        /home/paylens/.cache/chroma
 
-# Copy all project files
-COPY . .
-
-# Generate deterministic dataset at build time
-RUN python data/generate.py
-
-ENV PORT=8000
+USER paylens
 EXPOSE 8000
 
-# Start server with dynamic port support for cloud hosts
-CMD ["sh", "-c", "uvicorn backend.api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# App Runner and ALB both poll this; it reports db + kb reachability, not just
+# "the process is alive".
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+  CMD python -c "import os,urllib.request,json; \
+u=f'http://127.0.0.1:{os.getenv(\"PORT\",\"8000\")}/health'; \
+d=json.load(urllib.request.urlopen(u, timeout=4)); \
+raise SystemExit(0 if d.get('status')=='ok' else 1)"
+
+# One worker per container: the L0/L2 caches are in-process, so extra workers
+# would each keep a separate copy and cut the hit rate. Scale with tasks.
+CMD ["sh", "-c", "exec uvicorn paylens2.api.app:app --host 0.0.0.0 --port ${PORT} --workers 1 --timeout-keep-alive 65"]

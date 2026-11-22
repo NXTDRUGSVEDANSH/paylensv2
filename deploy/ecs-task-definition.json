@@ -1,0 +1,47 @@
+{
+  "family": "paylens",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "runtimePlatform": { "cpuArchitecture": "X86_64", "operatingSystemFamily": "LINUX" },
+  "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/paylensTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "paylens",
+      "image": "<ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/paylens:latest",
+      "essential": true,
+      "readonlyRootFilesystem": false,
+      "portMappings": [{ "containerPort": 8000, "protocol": "tcp" }],
+      "environment": [
+        { "name": "PORT", "value": "8000" },
+        { "name": "DUCKDB_PATH", "value": "/app/data/paylens.duckdb" },
+        { "name": "CHROMA_PATH", "value": "/app/data/chroma_db" },
+        { "name": "CORS_ORIGINS", "value": "https://paylens.example.com" },
+        { "name": "MAX_SQL_ROWS", "value": "5000" },
+        { "name": "SQL_TIMEOUT_S", "value": "10" },
+        { "name": "ANSWER_CACHE_SIZE", "value": "512" }
+      ],
+      "secrets": [
+        {
+          "name": "LLM_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:ap-south-1:<ACCOUNT_ID>:secret:paylens/llm-api-key"
+        }
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "python -c \"import urllib.request,json,sys; sys.exit(0 if json.load(urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=4))['status']=='ok' else 1)\""],
+        "interval": 30, "timeout": 5, "retries": 3, "startPeriod": 90
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/paylens",
+          "awslogs-region": "ap-south-1",
+          "awslogs-stream-prefix": "ecs",
+          "awslogs-create-group": "true"
+        }
+      }
+    }
+  ]
+}

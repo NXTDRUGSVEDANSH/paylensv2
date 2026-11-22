@@ -189,6 +189,13 @@ The YAML is rendered into the LLM prompt as a compact schema card. **The LLM nev
    └──────────────────┬───────────────────┘      explicitly and proceed
                       ▼
    ┌──────────────────────────────────────┐
+   │ 1b. ROUTE                            │  not every question is a metric
+   │     open      → health scan (§5a)    │  question. Routing is phrase-based
+   │     theoretic → advisory   (§5b)     │  and deterministic; both branches
+   │     otherwise → continue below       │  run AFTER the access-scope check
+   └──────────────────┬───────────────────┘
+                      ▼
+   ┌──────────────────────────────────────┐
    │ 2. SEMANTIC RESOLUTION               │  map NL → {metric, dimensions,
    │    retrieve relevant metrics/dims    │  filters, grain} from YAML only
    └──────────────────┬───────────────────┘
@@ -243,6 +250,31 @@ The YAML is rendered into the LLM prompt as a compact schema card. **The LLM nev
 **Why two LLM calls and not one:** call #1 decides *what to compute*; Python *computes it*; call #2 only *narrates numbers it was handed*. The model never calculates a percentage, so it cannot hallucinate one. This is the same two-call split that worked in the Fractal AI narrator.
 
 ---
+
+### 5b. The advisory path — questions with no computable answer
+
+"How do I improve my success rate", "what is a technical decline", "should I
+retry failed payments", "is 86% good". None names a measurement, so the metric
+pipeline can only offer a picker.
+
+Handing the sentence to the model is the obvious implementation and it fails in
+one specific way: it produces invented benchmarks. So the model writes the prose
+and supplies none of the substance.
+
+| Stage | Who | What |
+|---|---|---|
+| 1. Classify | deterministic | kind of question + catalogue entries, phrase-matched and stem-tolerant |
+| 2. Ground | deterministic | probes measured through the **same nine-check guard and row scope**, numbered `E1 … En` |
+| 3. Compose | LLM call | allowed exactly two sources: the selected levers and the measured numbers |
+| 4. Verify | deterministic | every number must be in the pack; every `[E3]` must resolve |
+
+**One ungrounded number discards the whole composition**; the catalogue answer is
+served instead. Substance lives in `semantic/playbooks.yaml` — 10 glossary
+entries, 9 playbooks, 29 levers, each with an owner and a PayLens question that
+checks it. No similarity ranking: no catalogue match means no answer from this
+path, and the question falls through to the normal one.
+
+Reported in the eval as a seventh measure, **advisory grounding**.
 
 ## 6. The validation gate (`core/guard.py`)
 

@@ -23,7 +23,29 @@ from decimal import Decimal
 
 from backend import config
 from backend.core import db
-from backend.core.compiler import to_count_query
+import sqlglot
+from sqlglot import exp
+
+
+def to_count_query(bound_sql: str) -> str:
+    """
+    Wrap a bound query to count its rows, for "showing 5,000 of N".
+
+    Strips ORDER BY / LIMIT, which are meaningless under a count and would
+    otherwise cap the count at the sentinel.
+
+    Lived in the v1 compiler, which this build no longer ships. It is the only
+    thing the executor ever needed from it, and it is pure SQL rewriting with
+    no dependency on how the query was produced — so it belongs next to the
+    code that executes queries rather than next to the code that compiled them.
+    """
+    root = sqlglot.parse_one(bound_sql, read="duckdb")
+    target = root.this if isinstance(root, exp.With) else root
+    for key in ("order", "limit", "offset"):
+        if isinstance(target, exp.Select):
+            target.set(key, None)
+    return (f"SELECT count(*) AS total_rows FROM (\n"
+            f"{root.sql(dialect='duckdb', pretty=True)}\n) _cnt")
 
 log = logging.getLogger("paylens.executor")
 

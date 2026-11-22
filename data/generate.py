@@ -29,6 +29,7 @@ Outputs
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -38,9 +39,12 @@ import numpy as np
 import pandas as pd
 
 from npci_calibration import (
-    ACQUIRER_BANKS, FAILURE_CODES, ISSUER_BANKS, METHOD_ISSUER_SENSITIVITY,
+    ACQUIRER_BANKS, ACQUIRER_INCIDENT, CARD_PRESENT_MODES,
+    DEGRADED_TERMINAL_TECH_BOOST, ENTRY_MODE_MIX, ISSUER_BANKS,
+    JOURNEY_FAILURE_CODES, JOURNEY_STEPS, METHOD_ISSUER_SENSITIVITY,
     METHOD_MIX_BASE, METHOD_MIX_SHIFTED, METHOD_SUCCESS_RATE, PENDING_RATE,
-    SR_DRIFT, UPI_APPROVAL_PCT, calibrate_declines, expected_decomposition,
+    SIM_TERMINAL_TECH_BOOST, SR_DRIFT, TECH_SHARE_OF_FAILURES, UPI_APPROVAL_PCT,
+    calibrate_declines, code_eligible, expected_decomposition,
 )
 
 SEED = 42
@@ -206,15 +210,82 @@ def dim_merchant() -> pd.DataFrame:
 
 
 def dim_failure_code() -> pd.DataFrame:
-    return pd.DataFrame(
-        [dict(failure_code=c, category=cat, description=d, is_retriable=r,
-              owner=o, decline_class=dc) for c, cat, d, r, o, dc, _ in FAILURE_CODES])
+    """One row per journey failure code. `journey_step` is what makes 'where in the
+    journey does it break' a groupable question rather than a narrative."""
+    return pd.DataFrame([
+        dict(failure_code=code, category=cat, description=desc,
+             journey_step=step, journey_step_label=JOURNEY_STEPS[step],
+             owner=owner, decline_type=dt, is_retriable=retr,
+             npci_td_scope=npci)
+        for code, cat, desc, step, owner, dt, retr, npci, _w, _m in JOURNEY_FAILURE_CODES])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Transactions
+# Terminals
 # ─────────────────────────────────────────────────────────────────────────────
-def build_transactions(rng, cal: dict, merchants: pd.DataFrame) -> pd.DataFrame:
+TERMINALS_BY_TIER = {"enterprise": 6, "mid": 3, "sme": 1}
+SOFTWARE_VERSIONS = ["4.8.2", "4.7.1", "4.6.0", "3.9.4"]   # newest .. oldest
+METRO_CITIES = {"Mumbai", "New Delhi", "Bengaluru", "Chennai", "Hyderabad",
+                "Kolkata", "Ahmedabad"}
+
+
+def dim_terminal(merchants: pd.DataFrame) -> pd.DataFrame:
+    """
+    A terminal estate hung off the merchants, so region and city are consistent
+    between the two tables. Health is correlated with software version and with
+    connectivity, because that is the actual causal story an estate manager acts
+    on: old firmware on a SIM link in a non-metro city is where timeouts live.
+    """
+    rows = []
+    for m in merchants.itertuples():
+        for k in range(TERMINALS_BY_TIER[m.tier]):
+            tid = f"TERM-{m.merchant_id[2:]}-{k + 1}"
+            metro = m.city in METRO_CITIES
+            # [ASSUMED] metros are mostly on broadband; smaller cities lean on SIM.
+            conn = "wifi" if (_h(tid, "c") % 100) < (82 if metro else 38) else "sim"
+            vi = _h(tid, "v") % 100
+            ver = SOFTWARE_VERSIONS[0 if vi < 46 else 1 if vi < 74 else 2 if vi < 91 else 3]
+            stale = ver in SOFTWARE_VERSIONS[2:]
+            p_degraded = 10 + (14 if conn == "sim" else 0) + (18 if stale else 0) \
+                            + (0 if metro else 6)
+            rows.append(dict(
+                terminal_id=tid, merchant_id=m.merchant_id, city=m.city,
+                state=m.state, region=m.region, connectivity=conn,
+                software_version=ver, is_software_stale=stale,
+                health="degraded" if (_h(tid, "h") % 100) < p_degraded else "ok",
+                installed_at=m.onboarded_at + timedelta(days=int(_h(tid, "i") % 60))))
+    return pd.DataFrame(rows)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Failure-code eligibility
+# ─────────────────────────────────────────────────────────────────────────────
+# Two codes need a restriction the entry mode alone cannot express: an EMI
+# ineligibility cannot occur on a non-EMI sale, and a card cannot be blocked when
+# no card was presented. Everything else is fully determined by entry mode.
+METHOD_ONLY = {"EMI_INELIGIBLE": {"EMI"}, "CARD_BLOCKED": {"CARD", "EMI"}}
+
+
+@functools.lru_cache(maxsize=None)
+def _code_dist(method: str, entry_mode: str, decline_type: str) -> tuple:
+    """(codes, probabilities) for one (rail, entry mode, class). Memoised: there are
+    at most 5 x 5 x 2 of these and the inner loop asks for them ~9,000 times."""
+    rows = [r for r in JOURNEY_FAILURE_CODES
+            if r[5] == decline_type
+            and code_eligible(r, entry_mode)
+            and method in METHOD_ONLY.get(r[0], {method})]
+    if not rows:
+        # Can only happen if a rail has no eligible code of this class at all.
+        # Fail loudly: silently returning None would write NULL failure codes onto
+        # FAILED rows, which reads downstream as "unclassified failure" forever.
+        raise ValueError(f"no {decline_type} failure code is possible for "
+                         f"{method}/{entry_mode} — the eligibility table is wrong")
+    w = np.array([r[8] for r in rows], dtype=float)
+    return tuple(r[0] for r in rows), tuple(w / w.sum())
+
+
+def build_transactions(rng, cal: dict, merchants: pd.DataFrame,
+                       terminals: pd.DataFrame) -> pd.DataFrame:
     sr_surface, bank_w = build_sr_surface(cal)
     wobble = _weekday_wobble(WEEKDAY_VOLUME)
     bank_ids = [b[0] for b in ISSUER_BANKS]
@@ -224,13 +295,26 @@ def build_transactions(rng, cal: dict, merchants: pd.DataFrame) -> pd.DataFrame:
                   np.where(merchants["tier"].to_numpy() == "mid", 1.6, 1.0))
     mw = mw / mw.sum()
 
+    # Terminal lookup as flat arrays: offset + (hash % count) picks a terminal that
+    # genuinely belongs to the merchant on the row, so terminal.region always
+    # agrees with merchant.region. A hash over the row id (the previous approach)
+    # produced terminals in the wrong city for 93% of rows.
+    t_order = terminals.sort_values("merchant_id").reset_index(drop=True)
+    m_pos = {m: i for i, m in enumerate(mids)}
+    t_ids = t_order["terminal_id"].to_numpy()
+    t_degraded = (t_order["health"].to_numpy() == "degraded")
+    t_sim = (t_order["connectivity"].to_numpy() == "sim")
+    counts_by_m = t_order.groupby("merchant_id").size()
+    t_count = np.array([counts_by_m[m] for m in mids])
+    starts = np.zeros(len(mids), dtype=int)
+    running = {}
+    for i, m in enumerate(t_order["merchant_id"].to_numpy()):
+        running.setdefault(m, i)
+    for m, i in running.items():
+        starts[m_pos[m]] = i
+
     acq_ids = [a[0] for a in ACQUIRER_BANKS]
     acq_w = np.array([a[2] for a in ACQUIRER_BANKS])
-
-    f_business = [f[0] for f in FAILURE_CODES if f[5] == "business"]
-    f_bus_w = np.array([f[6] for f in FAILURE_CODES if f[5] == "business"]); f_bus_w /= f_bus_w.sum()
-    f_technical = [f[0] for f in FAILURE_CODES if f[5] == "technical"]
-    f_tec_w = np.array([f[6] for f in FAILURE_CODES if f[5] == "technical"]); f_tec_w /= f_tec_w.sum()
 
     lat_base = {"UPI": 900, "CARD": 1900, "NETBANKING": 3400, "WALLET": 1100, "EMI": 2600}
     chunks: list[pd.DataFrame] = []
@@ -251,6 +335,8 @@ def build_transactions(rng, cal: dict, merchants: pd.DataFrame) -> pd.DataFrame:
             n_m = int(round(n_day * share))
             if n_m <= 0:
                 continue
+            modes = list(ENTRY_MODE_MIX[method])
+            mode_p = np.array([ENTRY_MODE_MIX[method][m] for m in modes])
             w = np.array([bank_w[method][b] for b in bank_ids])
             counts = _apportion(n_m, w)
 
@@ -268,13 +354,46 @@ def build_transactions(rng, cal: dict, merchants: pd.DataFrame) -> pd.DataFrame:
                                   + ["PENDING"] * n_pend, dtype=object)
                 rng.shuffle(status)
 
-                # Failure class follows NPCI's split: technical declines are rare.
-                td_share = cal[bid]["td"] / max(cal[bid]["bd"] + cal[bid]["td"], 1e-9)
-                is_tech = rng.random(n_cell) < td_share
-                fcode = np.where(
-                    status == "FAILED",
-                    np.where(is_tech, rng.choice(f_technical, n_cell, p=f_tec_w),
-                             rng.choice(f_business, n_cell, p=f_bus_w)), None)
+                m_idx = rng.choice(len(mids), n_cell, p=mw)
+                entry_mode = rng.choice(modes, n_cell, p=mode_p)
+                card_present = np.isin(entry_mode, CARD_PRESENT_MODES)
+
+                # Terminal: present for anything at the counter (card read or QR on
+                # a soundbox), absent for an online checkout. NULL here is real
+                # missing-by-design, not a data-quality defect, and the DQ panel
+                # distinguishes the two.
+                t_pick = starts[m_idx] + (
+                    np.array([_h(int(i), "tp") for i in m_idx + seq]) % t_count[m_idx])
+                has_term = entry_mode != "online"
+                terminal_id = np.where(has_term, t_ids[t_pick], None)
+
+                # Terminal condition changes WHY a payment fails, not how often —
+                # the success-rate surface is untouched, so the mix/rate
+                # decomposition stays exactly as calibrated. Only card-present
+                # modes are affected: a reader fault is impossible on a QR scan,
+                # and boosting UPI here would break the NPCI 0.24% anchor.
+                boost = np.where(card_present & t_degraded[t_pick],
+                                 DEGRADED_TERMINAL_TECH_BOOST, 1.0)
+                boost *= np.where(card_present & t_sim[t_pick],
+                                  SIM_TERMINAL_TECH_BOOST, 1.0)
+
+                if method == "UPI":
+                    # Per-bank NPCI ratio, preserved exactly (ICICI's 0.73% TD etc).
+                    base_tech = cal[bid]["td"] / max(cal[bid]["bd"] + cal[bid]["td"], 1e-9)
+                else:
+                    base_tech = TECH_SHARE_OF_FAILURES[method]
+                tech_share = np.clip(base_tech * boost, 0.0, 0.85)
+                is_tech = rng.random(n_cell) < tech_share
+
+                fcode = np.full(n_cell, None, dtype=object)
+                failed = status == "FAILED"
+                for mode in modes:
+                    for dt, want_tech in (("technical", True), ("business", False)):
+                        sel = failed & (entry_mode == mode) & (is_tech == want_tech)
+                        k = int(sel.sum())
+                        if k:
+                            codes, probs = _code_dist(method, mode, dt)
+                            fcode[sel] = rng.choice(codes, k, p=probs)
 
                 pm = (rng.choice(PM_BY_METHOD[method], n_cell, p=CARD_PM_W)
                       if method == "CARD" else np.full(n_cell, PM_BY_METHOD[method][0]))
@@ -291,11 +410,13 @@ def build_transactions(rng, cal: dict, merchants: pd.DataFrame) -> pd.DataFrame:
                 chunks.append(pd.DataFrame(dict(
                     txn_id=[f"T-{i:08d}" for i in ids],
                     txn_ts=ts,
-                    merchant_id=rng.choice(mids, n_cell, p=mw),
+                    merchant_id=mids[m_idx],
                     bank_id=np.where(null_bank, None, bid),
                     acquirer_bank_id=rng.choice(acq_ids, n_cell, p=acq_w),
                     pm_id=pm,
-                    terminal_id=[f"TERM-{_h(i, 'tm') % 9000 + 1000}" for i in ids],
+                    terminal_id=terminal_id,
+                    entry_mode=entry_mode,
+                    is_emi=(method == "EMI"),
                     amount=np.round(np.exp(rng.normal(6.6, 0.95, n_cell)), 2),
                     currency="INR",
                     status=status,
@@ -311,6 +432,51 @@ def build_transactions(rng, cal: dict, merchants: pd.DataFrame) -> pd.DataFrame:
                 )))
 
     return pd.concat(chunks, ignore_index=True)
+
+
+def plant_acquirer_incident(df: pd.DataFrame, rng) -> dict:
+    """
+    Three hours of one acquirer being unavailable. The second planted story, and
+    the one that answers a different question from the mix shift: this is a RATE
+    failure localised to an owner, where the mix shift is a composition change with
+    no rail actually degrading.
+
+    Placed outside the mix-shift comparison weeks on purpose (see ACQUIRER_INCIDENT).
+    Successes in the window are flipped to FAILED and relabelled, and failures
+    already there are relabelled too, so the incident shows up as both a
+    success-rate dip and a technical-share spike for that one acquirer.
+    """
+    inc = ACQUIRER_INCIDENT
+    day = date.fromisoformat(inc["date"])
+    hour = df["txn_ts"].dt.hour
+    win = ((df["txn_ts"].dt.date == day)
+           & (df["acquirer_bank_id"] == inc["acquirer_bank_id"])
+           & (hour >= inc["hour_from"]) & (hour < inc["hour_to"]))
+
+    codes, cw = list(inc["codes"]), np.array(inc["code_weights"], dtype=float)
+    cw = cw / cw.sum()
+
+    succ = df.index[win & (df["status"] == "SUCCESS")]
+    n_flip = int(round(len(succ) * inc["success_to_failure_rate"]))
+    flip = rng.choice(succ, size=n_flip, replace=False) if n_flip else np.array([], dtype=int)
+    df.loc[flip, "status"] = "FAILED"
+
+    relabel = df.index[win & (df["status"] == "FAILED")]
+    # Pre-existing business declines in the window are left alone — a customer
+    # still types the wrong PIN during an outage, and wiping them out would make
+    # the incident look cleaner than any real one does.
+    tech_or_flipped = np.union1d(
+        np.asarray(flip, dtype=int),
+        np.asarray(relabel[df.loc[relabel, "failure_code"].isin(
+            [r[0] for r in JOURNEY_FAILURE_CODES if r[5] == "technical"])], dtype=int))
+    if len(tech_or_flipped):
+        df.loc[tech_or_flipped, "failure_code"] = rng.choice(
+            codes, len(tech_or_flipped), p=cw)
+
+    return {"date": str(day), "acquirer": inc["acquirer_bank_id"],
+            "window": f"{inc['hour_from']:02d}:00-{inc['hour_to']:02d}:00",
+            "in_window": int(win.sum()), "flipped": int(n_flip),
+            "relabelled": int(len(tech_or_flipped))}
 
 
 def plant_duplicates(df: pd.DataFrame, rng) -> tuple[pd.DataFrame, int]:
@@ -381,8 +547,13 @@ def main() -> None:
 
     pms, banks, merchants, fcodes = (dim_payment_method(), dim_bank(cal),
                                      dim_merchant(), dim_failure_code())
-    txns = build_transactions(rng, cal, merchants)
+    terms = dim_terminal(merchants)
+    print(f"  terminals            {len(terms):>9,}  "
+          f"({(terms['health'] == 'degraded').sum()} degraded, "
+          f"{(terms['connectivity'] == 'sim').sum()} on SIM)")
+    txns = build_transactions(rng, cal, merchants, terms)
     print(f"  clean attempts       {len(txns):>9,}")
+    incident = plant_acquirer_incident(txns, rng)
     txns, n_dup = plant_duplicates(txns, rng)
     n_neg = plant_negative_amounts(txns, rng)
     setts = build_settlements(txns)
@@ -390,8 +561,8 @@ def main() -> None:
     print(f"  settlement batches   {len(setts):>9,}")
 
     tables = {"dim_payment_method": pms, "dim_bank": banks, "dim_merchant": merchants,
-              "dim_failure_code": fcodes, "fact_transactions": txns,
-              "fact_settlements": setts}
+              "dim_failure_code": fcodes, "dim_terminal": terms,
+              "fact_transactions": txns, "fact_settlements": setts}
 
     ds = Path(args.datasets)
     ds.mkdir(parents=True, exist_ok=True)
@@ -422,6 +593,30 @@ def main() -> None:
     print(f"  4 negative amounts         {q('select count(*) from fact_transactions where amount<0'):>9,}")
     print(f"  5 partial ingest (days)    {INCOMPLETE_DAYS:>9}  (~{int(INCOMPLETE_FRACTION*100)}% of expected volume)")
     print(f"  6 mix shift from {SHIFT_START}  netbanking 8% → 15%")
+    print(f"  7 acquirer incident        {incident['date']} {incident['window']} "
+          f"acquirer={incident['acquirer']}")
+    print(f"      {incident['in_window']:,} attempts in window, "
+          f"{incident['flipped']:,} successes flipped, "
+          f"{incident['relabelled']:,} relabelled to ACQUIRER_DOWN/ISSUER_TIMEOUT")
+
+    print("\n── Failure journey ──")
+    for step, label, n, codes in con.execute('''
+        select fc.journey_step, fc.journey_step_label, count(*) as n,
+               count(distinct fc.failure_code) as codes
+        from fact_transactions t join dim_failure_code fc using (failure_code)
+        group by 1, 2 order by 1''').fetchall():
+        print(f"  step {step:>2} {label:<24} {n:>8,} failures  ({codes} codes)")
+    print("  " + "-" * 56)
+    for dt, n, pct in con.execute('''
+        with t as (select * from fact_transactions
+                   qualify row_number() over (partition by txn_id
+                                              order by ingested_at desc) = 1)
+        select fc.decline_type, count(*),
+               round(100.0 * count(*) / (select count(*) from t
+                                         where status in ('SUCCESS','FAILED')), 3)
+        from t join dim_failure_code fc using (failure_code)
+        group by 1 order by 2 desc''').fetchall():
+        print(f"  {dt:<12} declines {n:>8,}  = {pct}% of attempts")
 
     print("\n── Row counts ──")
     for t in tables:

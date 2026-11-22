@@ -1,0 +1,505 @@
+/* PayLens v2 — Pine Labs palette, chat-shaped.
+
+   Pine Green #003323 and Mint #50D387 are the brand; everything else is paper
+   and ink. The sidebar is the only large field of pine, which is what keeps the
+   answer column reading as paper rather than as a tinted panel.
+
+   The --s1..--s7 series ramp is NOT the brand palette on purpose: charts.js
+   reads those tokens off :root, and brand mint, pine and cyan cluster too
+   tightly for a reader to tell four series apart. These are the classic UI's
+   validated ramps, identical values, so a chart cannot drift between the two
+   front ends. */
+
+:root{
+  /* brand */
+  --pine:#003323; --pine-2:#0a4731; --pine-3:#125a3c;
+  --mint:#50d387; --mint-ink:#04351f;
+
+  /* paper and ink */
+  --paper:#fbfbf9; --panel:#ffffff; --panel-2:#f4f6f3;
+  --line:#e2e6e1; --line-2:#eef1ed;
+  --ink:#0d1614; --ink-2:#44544d; --ink-3:#6e7d76;
+
+  /* status */
+  --good:#0f9960; --warn:#b07a05; --serious:#c2410c; --critical:#b42318;
+
+  /* chart series — read by /shared/charts.js off :root */
+  --s1:#0F9960; --s2:#7352E8; --s3:#B07A05; --s4:#1177A6; --s5:#CC3D73;
+  --s6:#4A5D8A; --s7:#8A6A3D; --other:#8a938f; --grid:#e8ebe9;
+
+  --sans:"Instrument Sans",-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;
+  --serif:"Newsreader",Georgia,"Times New Roman",serif;
+  --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+
+  --r:10px; --r-sm:7px; --r-lg:16px;
+  --rail-w:268px; --col-w:720px;
+  --shadow:0 1px 2px rgba(0,51,35,.05), 0 6px 20px rgba(0,51,35,.055);
+  --ease:cubic-bezier(.22,.61,.36,1);
+}
+
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){
+  --paper:#0e1211; --panel:#151a18; --panel-2:#1c2220;
+  --line:#28302c; --line-2:#202724;
+  --ink:#e9edea; --ink-2:#a9b4af; --ink-3:#7d8882;
+  --good:#14a86f; --warn:#c08a0f; --serious:#e26a2c; --critical:#e05a50;
+  --s1:#14A86F; --s2:#8169EC; --s3:#C08A0F; --s4:#2E97BA; --s5:#E04F82;
+  --s6:#6478A8; --s7:#A6834F; --other:#7b847f; --grid:#242b28;
+  --shadow:0 1px 2px rgba(0,0,0,.45), 0 6px 20px rgba(0,0,0,.3);
+}}
+:root[data-theme="dark"]{
+  --paper:#0e1211; --panel:#151a18; --panel-2:#1c2220;
+  --line:#28302c; --line-2:#202724;
+  --ink:#e9edea; --ink-2:#a9b4af; --ink-3:#7d8882;
+  --good:#14a86f; --warn:#c08a0f; --serious:#e26a2c; --critical:#e05a50;
+  --s1:#14A86F; --s2:#8169EC; --s3:#C08A0F; --s4:#2E97BA; --s5:#E04F82;
+  --s6:#6478A8; --s7:#A6834F; --other:#7b847f; --grid:#242b28;
+  --shadow:0 1px 2px rgba(0,0,0,.45), 0 6px 20px rgba(0,0,0,.3);
+}
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; display:flex; background:var(--paper); color:var(--ink);
+  font:400 15px/1.62 var(--sans);
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+}
+button,input,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--mint); outline-offset:2px; border-radius:4px}
+code,pre,.mono{font-family:var(--mono)}
+
+.skip{position:absolute;left:-9999px;top:0;z-index:99;background:var(--mint);
+  color:var(--mint-ink);padding:9px 14px;font-weight:600;border-radius:0 0 var(--r) 0}
+.skip:focus{left:0}
+
+/* ═══ sidebar ═══════════════════════════════════════════════════════════ */
+#rail{
+  width:var(--rail-w); flex:none; height:100vh; background:var(--pine);
+  color:#e8f3ec; display:flex; flex-direction:column; z-index:30;
+}
+.rail-top{display:flex;align-items:center;justify-content:space-between;
+  padding:17px 16px 6px}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.mark{width:22px;height:22px;flex:none;border-radius:6px;background:var(--pine-3);
+  position:relative;box-shadow:inset 0 0 0 1px rgba(80,211,135,.3)}
+.mark::after{content:"";position:absolute;inset:0;margin:auto;width:9px;height:9px;
+  border-radius:50%;background:var(--mint)}
+.wordmark{font-weight:600;font-size:16px;letter-spacing:-.2px;color:#fff;
+  display:flex;align-items:baseline;gap:6px}
+.wordmark em{font-style:normal;font-size:10px;font-weight:600;letter-spacing:.3px;
+  color:var(--mint);background:rgba(80,211,135,.14);padding:2px 5px;border-radius:5px}
+
+.newchat{
+  margin:10px 12px 12px; padding:9px 12px; display:flex; align-items:center; gap:9px;
+  background:transparent; color:#fff; border:1px solid rgba(255,255,255,.16);
+  border-radius:var(--r); cursor:pointer; font-size:14px; font-weight:500;
+  transition:background .15s var(--ease), border-color .15s var(--ease);
+}
+.newchat:hover{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.28)}
+.newchat .plus{font-size:16px;line-height:1;color:var(--mint)}
+
+/* history — scrolls, so the account block below it never moves */
+.history{flex:1 1 auto; overflow-y:auto; padding:0 8px 10px; min-height:0;
+  scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.2) transparent}
+.history::-webkit-scrollbar{width:8px}
+.history::-webkit-scrollbar-thumb{background:rgba(255,255,255,.17);border-radius:8px}
+.daygroup{padding:12px 10px 5px;font-size:11.5px;color:rgba(232,243,236,.5);
+  font-weight:500}
+.convitem{
+  display:block; width:100%; text-align:left; padding:8px 10px; margin-bottom:1px;
+  background:transparent; border:0; border-radius:var(--r-sm); cursor:pointer;
+  color:rgba(232,243,236,.82); font-size:13.5px; line-height:1.35;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  transition:background .13s var(--ease);
+}
+.convitem:hover{background:rgba(255,255,255,.07);color:#fff}
+.convitem.on{background:rgba(80,211,135,.15);color:#fff;
+  box-shadow:inset 2px 0 0 var(--mint)}
+.convitem i{display:block;font-style:normal;font-size:11.5px;
+  color:rgba(232,243,236,.45);margin-top:1px}
+.convitem.on i{color:rgba(232,243,236,.62)}
+.histnone{padding:10px;font-size:12.5px;color:rgba(232,243,236,.45);line-height:1.5}
+
+/* account — pinned under the history */
+.account{flex:none;border-top:1px solid rgba(255,255,255,.1);padding:8px}
+.acctbtn{
+  display:flex; align-items:center; gap:10px; width:100%; padding:9px 10px;
+  background:transparent; border:0; border-radius:var(--r-sm); cursor:pointer;
+  text-align:left; transition:background .13s var(--ease);
+}
+.acctbtn:hover{background:rgba(255,255,255,.07)}
+.avatar{width:26px;height:26px;flex:none;border-radius:50%;
+  background:rgba(255,255,255,.13);color:#fff;font-size:11.5px;font-weight:600;
+  display:grid;place-items:center;letter-spacing:.2px}
+.acctbtn[data-signed="1"] .avatar{background:var(--mint);color:var(--mint-ink)}
+.acctwho{min-width:0;flex:1}
+.acctwho b{display:block;font-size:13px;font-weight:500;color:#fff;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.acctwho i{display:block;font-style:normal;font-size:11.5px;
+  color:rgba(232,243,236,.52);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chev{width:7px;height:7px;flex:none;border-right:1.5px solid rgba(255,255,255,.5);
+  border-bottom:1.5px solid rgba(255,255,255,.5);transform:rotate(-135deg);
+  transition:transform .18s var(--ease)}
+.acctbtn[aria-expanded="true"] .chev{transform:rotate(45deg)}
+
+.acctpanel{padding:4px 10px 8px}
+.acctpanel label{display:block;font-size:11.5px;color:rgba(232,243,236,.6);
+  margin:9px 0 4px}
+.acctpanel input{width:100%;padding:8px 10px;border-radius:var(--r-sm);
+  background:rgba(0,0,0,.22);border:1px solid rgba(255,255,255,.16);color:#fff;
+  font-size:13.5px}
+.acctpanel input:focus{border-color:var(--mint);outline:none}
+.primary{
+  width:100%; margin-top:11px; padding:9px 12px; border:0; border-radius:var(--r-sm);
+  background:var(--mint); color:var(--mint-ink); font-weight:600; font-size:13.5px;
+  cursor:pointer; transition:filter .13s var(--ease);
+}
+.primary:hover{filter:brightness(1.07)}
+.primary:disabled{opacity:.55;cursor:default}
+.loginerr{margin:9px 0 0;font-size:12.5px;color:#ffb4ab}
+.railnote{margin:10px 0 0;font-size:11.5px;line-height:1.5;
+  color:rgba(232,243,236,.52)}
+.acctstate{font-size:12.5px;line-height:1.55;color:rgba(232,243,236,.72);
+  padding:4px 0 2px}
+.acctstate b{color:#fff}
+.scopetag{display:inline-block;margin-top:7px;font-family:var(--mono);font-size:11px;
+  background:rgba(80,211,135,.14);color:var(--mint);padding:3px 7px;border-radius:5px;
+  word-break:break-all}
+.signout{width:100%;margin-top:11px;padding:8px;background:transparent;
+  border:1px solid rgba(255,255,255,.18);border-radius:var(--r-sm);color:#fff;
+  font-size:13px;cursor:pointer}
+.signout:hover{background:rgba(255,255,255,.07)}
+.demo{margin-top:12px;padding-top:11px;border-top:1px solid rgba(255,255,255,.1)}
+.demo p{margin:0 0 7px;font-size:11.5px;color:rgba(232,243,236,.55)}
+.demo code{background:rgba(0,0,0,.25);padding:2px 5px;border-radius:4px;font-size:11px}
+.demo button{display:block;width:100%;text-align:left;margin-bottom:3px;padding:6px 8px;
+  background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);
+  border-radius:var(--r-sm);color:rgba(232,243,236,.85);font-size:12px;cursor:pointer}
+.demo button:hover{border-color:var(--mint);color:#fff}
+.demo button span{display:block;font-size:11px;color:rgba(232,243,236,.5)}
+
+/* ═══ main ══════════════════════════════════════════════════════════════ */
+main{flex:1 1 auto;min-width:0;height:100vh;display:flex;flex-direction:column}
+
+.topbar{
+  flex:none; display:flex; align-items:center; gap:12px; padding:0 20px;
+  height:52px; border-bottom:1px solid var(--line-2); background:var(--paper);
+}
+.topbar h1{font-size:14px;font-weight:500;margin:0;color:var(--ink-2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+.topright{display:flex;align-items:center;gap:12px;flex:none}
+.health{display:flex;align-items:center;gap:9px;font-family:var(--mono);
+  font-size:11px;color:var(--ink-3)}
+.health s{text-decoration:none;display:flex;align-items:center;gap:5px}
+.health s::before{content:"";width:6px;height:6px;border-radius:50%;
+  background:var(--good)}
+.health s.bad{color:var(--critical)}
+.health s.bad::before{background:var(--critical)}
+.iconbtn{background:transparent;border:1px solid var(--line);border-radius:var(--r-sm);
+  width:30px;height:30px;display:grid;place-items:center;cursor:pointer;
+  color:var(--ink-2);font-size:14px;flex:none}
+.iconbtn:hover{background:var(--panel-2);color:var(--ink)}
+
+.scroller{flex:1 1 auto;overflow-y:auto;overscroll-behavior:contain;
+  scroll-padding-top:24px}
+.column{max-width:var(--col-w);margin:0 auto;padding:30px 24px 0}
+
+/* The tail. A new question is scrolled to the top of the viewport and the
+   answer streams in below it, so the previous turn leaves the screen — which
+   needs room below the last turn for that scroll to be possible at all. */
+.thread{padding-bottom:46vh}
+.thread:empty{padding-bottom:0}
+
+/* ═══ empty state ═══════════════════════════════════════════════════════ */
+.empty{padding-bottom:40px}
+.hero{font-family:var(--serif);font-size:clamp(25px,3.3vw,34px);line-height:1.22;
+  font-weight:400;letter-spacing:-.4px;margin:12px 0 0;max-width:19em}
+.hero-em{font-style:italic;color:var(--good)}
+.hero-sub{font-size:15px;line-height:1.65;color:var(--ink-2);max-width:48ch;
+  margin:16px 0 0}
+.lede{font-size:13px;font-weight:500;color:var(--ink-3);margin:38px 0 13px;
+  padding-bottom:7px;border-bottom:1px solid var(--line-2)}
+
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{padding:7px 13px;background:var(--panel);border:1px solid var(--line);
+  border-radius:100px;font-size:13.5px;color:var(--ink-2);cursor:pointer;
+  transition:border-color .13s var(--ease),color .13s var(--ease)}
+.chip:hover{border-color:var(--good);color:var(--ink)}
+
+.rail7{list-style:none;counter-reset:s;margin:0;padding:0;
+  display:grid;gap:1px;background:var(--line-2);border:1px solid var(--line-2);
+  border-radius:var(--r)}
+.rail7 li{counter-increment:s;background:var(--paper);padding:11px 14px 11px 40px;
+  position:relative;font-size:13.5px;display:flex;flex-wrap:wrap;gap:3px 10px;
+  align-items:baseline}
+.rail7 li:first-child{border-radius:var(--r) var(--r) 0 0}
+.rail7 li:last-child{border-radius:0 0 var(--r) var(--r)}
+.rail7 li::before{content:counter(s);position:absolute;left:14px;top:12px;
+  font-family:var(--mono);font-size:11px;color:var(--good);font-weight:500}
+.rail7 b{font-weight:600;font-size:13.5px;min-width:68px}
+.rail7 span{color:var(--ink-2);flex:1;min-width:14em}
+.rail7 code{font-size:12px;background:var(--panel-2);padding:1px 4px;border-radius:4px}
+
+.feat{display:grid;grid-template-columns:repeat(auto-fit,minmax(248px,1fr));
+  gap:22px 30px;margin:0}
+.feat dt{font-weight:600;font-size:14px;margin-bottom:4px}
+.feat dd{margin:0;font-size:13.5px;line-height:1.6;color:var(--ink-2)}
+
+/* ═══ a turn ════════════════════════════════════════════════════════════ */
+.turn{padding-top:4px}
+.turn + .turn{margin-top:34px}
+
+/* the question: a bubble, right-aligned, pine-tinted */
+.ask{display:flex;justify-content:flex-end;margin-bottom:22px}
+.ask p{margin:0;max-width:85%;padding:10px 15px;border-radius:var(--r-lg);
+  background:var(--pine);color:#f2faf5;font-size:14.5px;line-height:1.55;
+  border-bottom-right-radius:5px}
+
+/* the answer: not a card. Flowing content on a hairline spine, so the
+   evidence panels below are the only thing that reads as chrome. */
+.answer{border-left:2px solid var(--line);padding-left:19px}
+.answer.is-advice{border-left-color:var(--good)}
+.answer.is-refusal{border-left-color:var(--ink-3)}
+.answer.is-sysfail{border-left-color:var(--serious)}
+.answer.is-clarify{border-left-color:var(--warn)}
+.answer.is-explain{border-left-color:var(--s2)}
+.answer.is-decomp{border-left-color:var(--s4)}
+
+/* badges the shapes share */
+.badge.cache{background:color-mix(in srgb,var(--s4) 12%,transparent);
+  color:var(--s4);border-color:color-mix(in srgb,var(--s4) 26%,transparent)}
+.badge.warn{background:color-mix(in srgb,var(--warn) 12%,transparent);
+  color:var(--warn);border-color:color-mix(in srgb,var(--warn) 26%,transparent)}
+
+/* data quality */
+table.dq{width:100%;border-collapse:collapse;font-size:13px}
+table.dq td{padding:7px 9px;border-bottom:1px solid var(--line-2);
+  vertical-align:top;line-height:1.5}
+table.dq td.dq-s{width:1%;white-space:nowrap;font-family:var(--mono);
+  font-size:10.5px;text-transform:lowercase;color:var(--ink-3)}
+tr.dq-warn td.dq-s{color:var(--warn)}
+tr.dq-warn td{color:var(--ink)}
+tr.dq-pass td{color:var(--ink-3)}
+tr.dq-pass td.dq-s{color:var(--good)}
+
+/* the mix-vs-rate split: the two effects must read as two things */
+.split{margin-top:16px;padding:15px;border:1px solid var(--line);
+  border-radius:var(--r);background:var(--panel)}
+.split-tot{display:flex;align-items:baseline;gap:11px;margin-bottom:12px}
+.split-tot b{font-family:var(--serif);font-size:27px;font-weight:400;
+  letter-spacing:-.4px}
+.split-tot span{font-size:13px;color:var(--ink-3);font-family:var(--mono)}
+.split-bar{display:flex;height:9px;border-radius:5px;overflow:hidden;
+  background:var(--panel-2)}
+.split-bar i{display:block;height:100%}
+.split-bar i.mix{background:var(--s4)}
+.split-bar i.rate{background:var(--s3)}
+.split-legend{display:flex;flex-wrap:wrap;gap:7px 20px;margin-top:10px;
+  font-size:12.5px;color:var(--ink-2)}
+.split-legend i{display:inline-block;width:9px;height:9px;border-radius:3px;
+  margin-right:6px}
+.split-legend i.mix{background:var(--s4)}
+.split-legend i.rate{background:var(--s3)}
+.answer.is-explain .headline{font-size:19px}
+.pane a{color:var(--good);word-break:break-all}
+
+.headline{font-family:var(--serif);font-size:21px;line-height:1.36;font-weight:400;
+  letter-spacing:-.2px;margin:0;color:var(--ink)}
+.answer .kicker{margin:0 0 9px;font-size:12px;font-weight:500;color:var(--ink-3)}
+
+.badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+.badge{font-family:var(--mono);font-size:10.5px;padding:3px 8px;border-radius:5px;
+  background:var(--panel-2);color:var(--ink-3);border:1px solid var(--line-2)}
+.badge.ok{background:color-mix(in srgb,var(--good) 12%,transparent);
+  color:var(--good);border-color:color-mix(in srgb,var(--good) 26%,transparent)}
+.badge.no{background:color-mix(in srgb,var(--critical) 11%,transparent);
+  color:var(--critical);border-color:color-mix(in srgb,var(--critical) 26%,transparent)}
+.badge.hl{color:var(--ink-2)}
+
+.sec{font-size:12px;font-weight:500;color:var(--ink-3);margin:26px 0 9px}
+.obs{margin:0;padding:0;list-style:none}
+.obs li{position:relative;padding-left:16px;margin-bottom:8px;font-size:14.5px;
+  line-height:1.6;max-width:66ch}
+.obs li::before{content:"";position:absolute;left:0;top:.62em;width:5px;height:5px;
+  border-radius:50%;background:var(--good)}
+
+.hyp{border-left:2px solid var(--warn);padding:2px 0 2px 13px;margin-bottom:11px;
+  font-size:14px;line-height:1.58;max-width:66ch}
+.hyp .meta{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-top:4px}
+.caveat{font-size:13.5px;line-height:1.58;color:var(--ink-2);margin-bottom:7px;
+  padding-left:13px;border-left:2px solid var(--line);max-width:66ch}
+
+.lever{border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;
+  margin-bottom:9px;background:var(--panel)}
+.lever b{font-size:14.5px;font-weight:600}
+.lever .owner{font-family:var(--mono);font-size:10.5px;margin-left:8px;
+  padding:2px 7px;border-radius:5px;background:var(--panel-2);color:var(--ink-3);
+  white-space:nowrap}
+.lever p{margin:6px 0 0;font-size:13.5px;line-height:1.58;color:var(--ink-2)}
+
+.opts{display:flex;flex-direction:column;gap:7px;align-items:flex-start}
+.opt{text-align:left;background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--r);padding:10px 13px;cursor:pointer;width:100%;
+  transition:border-color .13s var(--ease)}
+.opt:hover{border-color:var(--good)}
+.opt b{display:block;font-size:14px;font-weight:500}
+.opt span{display:block;font-size:12.5px;color:var(--ink-3);margin-top:2px}
+.opt.check{width:auto;margin-top:9px;font-size:12.5px;padding:7px 11px;
+  font-family:var(--mono)}
+
+/* ═══ evidence: tabs ════════════════════════════════════════════════════ */
+.evidence{margin-top:22px;border:1px solid var(--line);border-radius:var(--r);
+  background:var(--panel);overflow:hidden}
+.tabs{display:flex;gap:2px;padding:5px;background:var(--panel-2);
+  border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{padding:5px 11px;background:transparent;border:0;border-radius:var(--r-sm);
+  font-size:12.5px;color:var(--ink-3);cursor:pointer;white-space:nowrap;
+  transition:background .12s var(--ease),color .12s var(--ease)}
+.tab:hover{color:var(--ink)}
+.tab.on{background:var(--panel);color:var(--ink);font-weight:500;
+  box-shadow:0 1px 2px rgba(0,51,35,.06)}
+.pane{display:none;padding:15px}
+.pane.on{display:block}
+.lbl{font-size:11.5px;color:var(--ink-3);margin:0 0 7px}
+.pane .lbl + pre{margin-top:0}
+.pane .lbl:not(:first-child){margin-top:15px}
+pre{font-family:var(--mono);font-size:12px;line-height:1.58;white-space:pre-wrap;
+  word-break:break-word;background:var(--panel-2);border:1px solid var(--line-2);
+  border-radius:var(--r-sm);padding:11px 13px;margin:0;overflow-x:auto}
+
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{text-align:left;font-weight:500;font-size:11.5px;color:var(--ink-3);
+  padding:6px 9px;border-bottom:1px solid var(--line);position:sticky;top:0;
+  background:var(--panel)}
+tbody td{padding:6px 9px;border-bottom:1px solid var(--line-2);
+  vertical-align:top}
+td.num{text-align:right;font-family:var(--mono);font-size:12px}
+.scrollx{overflow:auto;max-height:420px;border:1px solid var(--line-2);
+  border-radius:var(--r-sm)}
+table.facts td:first-child{font-family:var(--mono);font-size:11.5px;
+  color:var(--good);width:1%;white-space:nowrap}
+table.facts td:last-child{text-align:right;font-family:var(--mono);font-size:12.5px;
+  white-space:nowrap;font-weight:500}
+
+.chartbox{padding:4px 0 2px;overflow-x:auto}
+.overrides{font-size:12px;line-height:1.55;color:var(--ink-3);margin:9px 0 0;
+  padding-top:9px;border-top:1px dashed var(--line)}
+.overrides b{color:var(--ink-2);font-weight:500}
+.evchart + .evchart{margin-top:22px;padding-top:18px;border-top:1px solid var(--line-2)}
+details{margin-top:11px}
+summary{cursor:pointer;font-size:12px;color:var(--ink-3)}
+summary:hover{color:var(--ink)}
+
+/* ═══ the live stage panel ══════════════════════════════════════════════
+   Driven by events from the pipeline, not by a timer. A running stage shows a
+   live counter; a finished one shows the duration it reported. A repair is
+   amber, because it is neither progress nor failure — it is the system
+   catching something. */
+.thinking{display:flex;flex-direction:column;gap:2px;padding:1px 0}
+.stage{display:flex;align-items:baseline;gap:10px;padding:3px 0;font-size:13.5px;
+  color:var(--ink-3)}
+.stage .pip{width:7px;height:7px;flex:none;border-radius:50%;align-self:center;
+  border:1.5px solid currentColor}
+.stage .txt{flex:1;min-width:0}
+.stage .txt i{font-style:normal;color:var(--ink-3);font-size:12.5px}
+.stage .el{flex:none;font-family:var(--mono);font-size:11px;color:var(--ink-3);
+  font-variant-numeric:tabular-nums}
+
+.stage.on{color:var(--ink)}
+.stage.on .pip{border-color:var(--good);
+  animation:pulse 1.15s infinite var(--ease)}
+.stage.on .el{color:var(--good)}
+.stage.done{color:var(--ink-2)}
+.stage.done .pip{background:var(--good);border-color:var(--good)}
+.stage.bad{color:var(--serious)}
+.stage.bad .pip{background:var(--serious);border-color:var(--serious)}
+.stage.fix{color:var(--warn)}
+.stage.fix .pip{background:var(--warn);border-color:var(--warn)}
+.stage.fix .el{color:var(--warn)}
+@keyframes pulse{
+  0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--good) 45%,transparent)}
+  50%{box-shadow:0 0 0 5px color-mix(in srgb,var(--good) 0%,transparent)}
+}
+.badge.fix{background:color-mix(in srgb,var(--warn) 13%,transparent);
+  color:var(--warn);border-color:color-mix(in srgb,var(--warn) 28%,transparent)}
+
+/* ═══ composer ══════════════════════════════════════════════════════════ */
+.composer-wrap{flex:none;padding:14px 24px 16px;
+  background:linear-gradient(to top,var(--paper) 62%,transparent)}
+.composer{max-width:var(--col-w);margin:0 auto;display:flex;align-items:flex-end;
+  gap:9px;background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--r-lg);padding:8px 8px 8px 16px;box-shadow:var(--shadow);
+  transition:border-color .15s var(--ease)}
+.composer:focus-within{border-color:var(--good)}
+.composer textarea{flex:1;border:0;background:transparent;resize:none;
+  font-size:15px;line-height:1.55;padding:7px 0;max-height:184px;outline:none}
+.composer textarea::placeholder{color:var(--ink-3)}
+.send{width:34px;height:34px;flex:none;border:0;border-radius:50%;cursor:pointer;
+  background:var(--pine);color:#fff;display:grid;place-items:center;
+  transition:background .13s var(--ease),transform .13s var(--ease)}
+.send:hover{background:var(--pine-3)}
+.send:disabled{background:var(--line);color:var(--ink-3);cursor:default}
+.send.ready{background:var(--mint);color:var(--mint-ink)}
+.ctx{max-width:var(--col-w);margin:8px auto 0;font-size:11.5px;color:var(--ink-3);
+  text-align:center;min-height:1.2em}
+
+/* ═══ narrow ════════════════════════════════════════════════════════════ */
+.only-narrow{display:none}
+.scrim{position:fixed;inset:0;background:rgba(0,20,13,.45);z-index:25}
+
+@media (max-width:860px){
+  :root{--rail-w:280px}
+  .only-narrow{display:grid}
+  #rail{position:fixed;left:0;top:0;transform:translateX(-100%);
+    transition:transform .22s var(--ease)}
+  #rail.open{transform:none;box-shadow:0 0 40px rgba(0,0,0,.3)}
+  .column{padding:22px 16px 0}
+  .composer-wrap{padding:12px 16px 14px}
+  .hero{font-size:25px}
+  .ask p{max-width:92%}
+  .answer{padding-left:14px}
+  .health{display:none}
+  .feat{gap:18px}
+}
+@media (max-width:420px){
+  .topbar{padding:0 12px}
+  .column{padding:18px 12px 0}
+  .composer-wrap{padding:10px 12px 12px}
+}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;
+    animation-iteration-count:1!important;transition-duration:.001ms!important;
+    scroll-behavior:auto!important}
+}
+
+/* ═══ chart elements charts.js emits ════════════════════════════════════
+   The renderer draws the marks; the page styles them. Without these the KPI
+   renders as body text and the axes inherit nothing. Ported with this
+   stylesheet's token names (--line, --paper) rather than the classic UI's. */
+.chartbox svg{max-width:100%;height:auto;display:block}
+svg text{font-family:inherit;fill:var(--ink-2)}
+.axis{stroke:var(--line);stroke-width:1}
+.kpi{font-size:42px;font-weight:600;letter-spacing:-.03em;line-height:1.05;
+  color:var(--ink);font-variant-numeric:tabular-nums}
+.kpi-sub{color:var(--ink-3);font-size:13px;margin-top:5px}
+.legend{display:flex;flex-wrap:wrap;gap:14px;margin:0 0 12px;font-size:12.5px;
+  color:var(--ink-2)}
+.legend i{width:10px;height:10px;border-radius:3px;display:inline-block;
+  margin-right:6px;vertical-align:-1px}
+.donut-wrap{display:flex;flex-wrap:wrap;gap:18px;align-items:center}
+.jsteps{display:flex;flex-direction:column;gap:7px}
+.jstep{font-size:13px;color:var(--ink-2)}
+.matrix{border-collapse:collapse;font-size:12px}
+.seq-scale{display:flex;align-items:center;gap:7px;font-size:11.5px;
+  color:var(--ink-3);margin-top:9px}
+
+/* charts.js tooltip host. It positions #tip with inline left/top and toggles
+   the .on class, so the visibility rule has to key off that class. */
+#tip{position:fixed;z-index:60;pointer-events:none;opacity:0;
+  background:var(--ink);color:var(--paper);font-size:11.5px;line-height:1.45;
+  padding:6px 9px;border-radius:var(--r-sm);max-width:260px;
+  box-shadow:0 4px 14px rgba(0,0,0,.22);
+  transition:opacity .1s var(--ease)}
+#tip.on{opacity:1}
+#tip b{color:var(--mint);font-weight:500}

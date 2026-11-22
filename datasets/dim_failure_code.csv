@@ -1,8 +1,28 @@
-failure_code,category,description,is_retriable,owner,decline_class
-F-101,insufficient_funds,Insufficient funds,True,issuer,business
-F-102,issuer_decline,Issuer declined the request,True,issuer,business
-F-103,limit_exceeded,Transaction exceeds stipulated limit,True,issuer,business
-F-104,invalid_credential,Incorrect PIN or VPA,False,merchant,business
-F-105,risk_block,Blocked by risk engine,False,network,business
-F-106,timeout,Issuer or NPCI response timeout,True,issuer,technical
-F-107,technical_error,Acquirer or switch technical error,True,acquirer,technical
+failure_code,category,description,journey_step,journey_step_label,owner,decline_type,is_retriable,npci_td_scope
+AMT_MISMATCH,amount_mismatch,Wrong amount entered or billing not linked,1,Amount entry,merchant,business,True,False
+EMI_INELIGIBLE,emi_ineligible,Card not eligible for EMI,2,Choose method,customer,business,False,False
+OFFER_INVALID,offer_invalid,Offer expired or misconfigured,2,Choose method,merchant,business,False,False
+CHIP_READ_ERR,card_read_error,Damaged chip or magnetic stripe,3,Card read,customer,business,True,False
+TAP_LIMIT,limit_exceeded,Contactless limit exceeded,3,Card read,customer,business,True,False
+WRONG_PIN,invalid_credential,Wrong PIN or UPI PIN,4,Authentication,customer,business,True,False
+PIN_TRIES_EXCEEDED,invalid_credential,PIN attempts exceeded,4,Authentication,customer,business,False,False
+USER_ABANDONED,user_abandoned,Customer gave up before authorising,4,Authentication,customer,business,True,False
+FRAUD_BLOCK,risk_block,Blocked by risk or fraud rules,6,Pine Labs routing,pine_labs,business,False,False
+INSUFFICIENT_FUNDS,insufficient_funds,Not enough balance,8,Issuer decision,customer,business,True,False
+LIMIT_EXCEEDED,limit_exceeded,Daily or per-transaction limit hit,8,Issuer decision,customer,business,True,False
+CARD_BLOCKED,card_blocked,Card blocked or expired,8,Issuer decision,customer,business,False,False
+TERM_LOGGED_OUT,terminal_fault,Terminal logged out or software outdated,1,Amount entry,terminal,technical,True,False
+QR_GEN_FAIL,qr_generation,QR code could not be generated,2,Choose method,pine_labs,technical,True,False
+READER_FAULT,terminal_fault,Faulty card reader,3,Card read,terminal,technical,True,False
+NETWORK_TIMEOUT,connectivity,"Weak SIM or Wi-Fi, request timed out",5,Terminal to Pine Labs,terminal,technical,True,False
+TERM_OFFLINE,connectivity,Terminal offline,5,Terminal to Pine Labs,terminal,technical,True,False
+GATEWAY_ERROR,gateway_error,Internal gateway error,6,Pine Labs routing,pine_labs,technical,True,False
+ROUTED_TO_DEGRADED,routing_fault,Routed to a degraded acquirer,6,Pine Labs routing,pine_labs,technical,True,False
+ACQUIRER_DOWN,acquirer_unavailable,Acquiring bank unavailable,7,Acquirer / network,acquirer,technical,True,False
+NETWORK_OUTAGE,network_fault,Card network or NPCI outage,7,Acquirer / network,network,technical,True,False
+ISSUER_DOWN,issuer_unavailable,Issuer server down,8,Issuer decision,issuer,technical,True,True
+ISSUER_TIMEOUT,issuer_unavailable,Issuer too slow to respond,8,Issuer decision,issuer,technical,True,True
+RESPONSE_LOST,response_lost,"Approved but the reply was lost, reversal raised",9,Response / slip,network,technical,True,True
+DUPLICATE_CHARGE,duplicate_charge,Customer charged twice,9,Response / slip,pine_labs,technical,False,False
+BATCH_NOT_CLOSED,settlement_fault,"Batch not closed, so not settled",10,Settlement,merchant,technical,True,False
+SETTLEMENT_MISMATCH,settlement_fault,Counts differ between systems,10,Settlement,pine_labs,technical,True,False

@@ -1,0 +1,7 @@
+# Optional: the semantic Q->SQL cache (tier 1/2). Adds ~150 MB of wheels plus a
+# ~167 MB ONNX model that MUST be baked into the image, or every cold container
+# re-downloads it on its first request.
+#
+# Set DISABLE_CHROMA=true to run without this. You lose only the L1 semantic
+# cache; the L0/L2 answer caches, and every correctness guarantee, are unaffected.
+chromadb==1.5.9

@@ -55,6 +55,15 @@ datasets:
     grain: failure_code
     primary_key: failure_code
 
+  dim_terminal:
+    label: Terminals
+    grain: terminal
+    primary_key: terminal_id
+    description: >
+      The POS estate. Only card-present and QR attempts carry a terminal_id; an
+      online checkout has none, so terminal_id is NULL by design there and that
+      NULL must not be read as a data-quality defect.
+
 # ─────────────────────────────────────────────────────────────────────────────
 # METRICS
 # Every ratio metric states its numerator AND denominator explicitly. The
@@ -104,6 +113,47 @@ metrics:
     decomposable: true
     higher_is_better: false
     synonyms: [decline rate, drop rate]
+
+  # NPCI's own split, and the reason both are declared rather than one being
+  # derived in the UI: they have the SAME denominator (resolved attempts) but
+  # different owners. A business decline is the customer's wallet; a technical
+  # decline is somebody's server. Mixing them hides which one you can fix.
+  business_decline_rate:
+    label: Business Decline Rate
+    type: ratio
+    base: fact_transactions
+    requires_join: [dim_failure_code]
+    numerator: "count(*) filter (where t.status = 'FAILED' and fc.decline_type = 'business')"
+    denominator: "count(*) filter (where t.status in ('SUCCESS','FAILED'))"
+    denominator_note: >
+      Resolved attempts, matching NPCI's definition: a business decline is a
+      customer-side refusal (insufficient funds, wrong PIN, limit exceeded).
+      NPCI publishes 10.88% for the top-20 UPI remitter banks.
+    format: percent
+    decimals: 2
+    decomposable: true
+    higher_is_better: false
+    synonyms: [business decline, bd, customer side failures, business declines]
+
+  technical_decline_rate:
+    label: Technical Decline Rate
+    type: ratio
+    base: fact_transactions
+    requires_join: [dim_failure_code]
+    numerator: "count(*) filter (where t.status = 'FAILED' and fc.decline_type = 'technical')"
+    denominator: "count(*) filter (where t.status in ('SUCCESS','FAILED'))"
+    denominator_note: >
+      Resolved attempts. NOTE: this is BROADER than NPCI's technical decline,
+      which counts only faults at the bank or at NPCI. This metric also counts
+      terminal, connectivity, gateway and acquirer faults, which never reach
+      NPCI's switch. The NPCI-comparable subset is the codes flagged
+      npci_td_scope in dim_failure_code — see datasets/CALIBRATION.md.
+    format: percent
+    decimals: 2
+    decomposable: true
+    higher_is_better: false
+    synonyms: [technical decline, td, system failures, technical declines,
+               infra failures]
 
   txn_count:
     label: Attempts
@@ -270,9 +320,13 @@ dimensions:
     label: Failure Category
     table: dim_failure_code
     column: category
-    synonyms: [failure reason, decline reason, error category, why failed]
+    synonyms: [failure reason, decline reason, error category, why failed,
+               rejection reason, failure category, decline category]
     decomposable: true
     implies_filter: "t.status = 'FAILED'"
+    # Counting failures by reason IS the question when someone asks for "failure
+    # reasons" — no separate measure needs naming.
+    implies_metric: txn_count
 
   failure_owner:
     label: Failure Owner
@@ -281,6 +335,98 @@ dimensions:
     synonyms: [whose fault, responsible party, owner]
     decomposable: true
     implies_filter: "t.status = 'FAILED'"
+    implies_metric: txn_count
+
+  # Where in the payment journey it broke. The single most useful failure
+  # dimension, because it maps a failure to the team that owns that step.
+  journey_step:
+    label: Journey Step
+    table: dim_failure_code
+    column: journey_step_label
+    synonyms: [journey step, stage, step, where it failed, which step,
+               journey stage, funnel step, journey, payment journey]
+    decomposable: true
+    implies_filter: "t.status = 'FAILED'"
+    implies_metric: txn_count
+    expected_cardinality: 10
+
+  decline_type:
+    label: Decline Type
+    table: dim_failure_code
+    column: decline_type
+    synonyms: [decline type, business or technical, failure type, decline class]
+    decomposable: true
+    implies_filter: "t.status = 'FAILED'"
+    implies_metric: txn_count
+    expected_cardinality: 2
+
+  failure_code:
+    label: Failure Code
+    table: dim_failure_code
+    column: failure_code
+    synonyms: [error code, decline code, failure code, reason code]
+    decomposable: true
+    implies_filter: "t.status = 'FAILED'"
+    implies_metric: txn_count
+    expected_cardinality: 27
+
+  is_retriable:
+    label: Retriable
+    table: dim_failure_code
+    column: is_retriable
+    synonyms: [retriable, retryable, worth retrying, can be retried]
+    decomposable: true
+    implies_filter: "t.status = 'FAILED'"
+    implies_metric: txn_count
+
+  entry_mode:
+    label: Entry Mode
+    table: fact_transactions
+    column: entry_mode
+    synonyms: [entry mode, how it was paid, tap chip swipe, capture mode,
+               card entry, read mode]
+    decomposable: true
+    expected_cardinality: 5
+
+  is_emi:
+    label: EMI
+    table: fact_transactions
+    column: is_emi
+    synonyms: [emi, instalment, installment, emi transaction]
+    decomposable: true
+
+  connectivity:
+    label: Terminal Connectivity
+    table: dim_terminal
+    column: connectivity
+    synonyms: [connectivity, sim or wifi, link type, network type,
+               terminal connectivity]
+    decomposable: true
+    expected_cardinality: 2
+
+  terminal_health:
+    label: Terminal Health
+    table: dim_terminal
+    column: health
+    synonyms: [terminal health, health, degraded terminals, terminal condition]
+    decomposable: true
+    expected_cardinality: 2
+
+  software_version:
+    label: Terminal Software
+    table: dim_terminal
+    column: software_version
+    synonyms: [software version, firmware, terminal software, app version]
+    decomposable: true
+
+  terminal_id:
+    label: Terminal
+    table: fact_transactions
+    column: terminal_id
+    synonyms: [terminal, terminal id, device, pos machine]
+    decomposable: true
+    nullable: true
+    null_label: "Online (no terminal)"
 
   is_tokenized:
     label: Tokenized
@@ -307,6 +453,7 @@ joins:
   - { left: fact_transactions, left_on: acquirer_bank_id,  right: dim_bank,           right_on: bank_id,       type: left, alias: acquirer }
   - { left: fact_transactions, left_on: pm_id,             right: dim_payment_method, right_on: pm_id,         type: left }
   - { left: fact_transactions, left_on: failure_code,      right: dim_failure_code,   right_on: failure_code,  type: left }
+  - { left: fact_transactions, left_on: terminal_id,       right: dim_terminal,       right_on: terminal_id,   type: left }
   - { left: fact_settlements,  left_on: merchant_id,       right: dim_merchant,       right_on: merchant_id,   type: left }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -320,6 +467,7 @@ allowlist:
     - dim_bank
     - dim_payment_method
     - dim_failure_code
+    - dim_terminal
   # Functions that can read the filesystem or shell out. DuckDB ships several.
   functions_denied:
     - read_csv
@@ -362,6 +510,9 @@ rbac:
       row_scope:
         dimension: region
         claim: region                       # value comes from the principal's claims
+        # region lives on dim_merchant, which many queries never join. The guard
+        # anchors a semi-join on the fact table so the scope applies regardless.
+        anchor_table: fact_transactions
       masked_columns: []
       denied_metrics: [settled_amount]      # payouts are finance-only
       persona: >

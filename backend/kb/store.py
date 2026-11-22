@@ -126,6 +126,33 @@ def get_kb():
     return col
 
 
+def collection(name: str):
+    """
+    A second collection in the same store, sharing the client and the embedder.
+
+    The ONNX model costs ~25s to load; opening a separate PersistentClient for
+    another corpus would pay that twice and hold two handles on one directory.
+
+    Separate collections rather than one with a `kind` filter: the Q->SQL corpus
+    is retrieved to show the model how a query is SHAPED, and a definition
+    retrieved into that slot would teach it to answer a measurement with prose.
+    Keeping them apart means neither can ever be returned in the other's place.
+    """
+    get_kb()                                    # ensures client + ef exist
+    key = f"col:{name}"
+    if key in _state:
+        return _state[key]
+    col = _state["client"].get_or_create_collection(
+        name=name, embedding_function=_state["ef"],
+        metadata={"hnsw:space": "cosine"})
+    space = (col.metadata or {}).get("hnsw:space")
+    if space != "cosine":
+        raise KBUnavailable(
+            f"collection {name!r} uses hnsw:space={space!r}, not 'cosine'")
+    _state[key] = col
+    return col
+
+
 def embed(texts: list[str]) -> list[list[float]]:
     get_kb()
     return [list(v) for v in _state["ef"](texts)]

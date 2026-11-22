@@ -1,0 +1,534 @@
+# PayLens v2 semantic model — the view layer.
+#
+# Loaded through the EXISTING semantic/loader.py, so guard.py and rbac.py operate
+# on it exactly as they do on the classic model. That is the whole trick: the
+# security code is parameterised by the model it is handed, so v2 gets identical
+# enforcement without a line of it being copied.
+#
+# THE REASON THIS FILE EXISTS AT ALL
+# ----------------------------------
+# rbac.assert_injected (guard check 9) skips tables the query does not name:
+#
+#     targets = _selects_touching(root, pred.table)
+#     if not targets: continue          # vacuously passes
+#
+# The classic model anchors every role scope on fact_transactions. A v2 query
+# reads v_attempts and names no fact_transactions, so with the classic model it
+# would have NO row filter injected and check 9 would pass anyway — a
+# merchant_user would read every merchant's rows. Anchoring on v_attempts here
+# closes that. See paylens2/tests/test_rbac.py.
+
+version: v2-views-2026-11-21-01
+
+datasets:
+
+  v_attempts:
+    label: Payment attempts
+    description: >
+      One row per payment attempt, already de-duplicated and already joined to
+      merchant, issuing bank, acquiring bank, payment method, terminal and
+      failure code. This is the only transaction table that exists for v2.
+    grain: payment_attempt
+    primary_key: txn_id
+    time_column: txn_ts
+    # NOT declared here: the dedupe rule lives INSIDE the view. Declaring it
+    # would make the compiler wrap an already-deduplicated view a second time.
+    freshness_lag_days: 2
+
+  v_settlements:
+    label: Settlements
+    description: One row per settlement batch paid out to a merchant.
+    grain: settlement_batch
+    primary_key: settlement_id
+    time_column: settlement_date
+    freshness_lag_days: 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# METRICS — identical definitions to the classic model, expressed over the view.
+# The indicator columns carry the semantics, so the expressions are short enough
+# for a model to reproduce verbatim, which is what check 10 asserts.
+# ─────────────────────────────────────────────────────────────────────────────
+metrics:
+
+  success_rate:
+    label: Success Rate
+    type: ratio
+    base: v_attempts
+    numerator: "count(*) filter (where is_success)"
+    denominator: "count(*) filter (where is_resolved)"
+    denominator_note: >
+      PENDING attempts are EXCLUDED from the denominator. A pending attempt has
+      not yet resolved, so counting it as a failure understates the rate.
+    format: percent
+    decimals: 2
+    decomposable: true
+    higher_is_better: true
+    synonyms: [sr, success%, approval rate, auth rate, conversion]
+
+  failure_rate:
+    label: Failure Rate
+    type: ratio
+    base: v_attempts
+    numerator: "count(*) filter (where is_failed)"
+    denominator: "count(*) filter (where is_resolved)"
+    format: percent
+    decimals: 2
+    decomposable: true
+    higher_is_better: false
+    synonyms: [decline rate, failure%]
+
+  business_decline_rate:
+    label: Business Decline Rate
+    type: ratio
+    base: v_attempts
+    numerator: "count(*) filter (where is_business_decline)"
+    denominator: "count(*) filter (where is_resolved)"
+    denominator_note: >
+      The customer's side: no funds, wrong PIN, blocked or expired card. Not a
+      platform defect and mostly not engineerable away.
+    format: percent
+    decimals: 2
+    decomposable: true
+    higher_is_better: false
+    synonyms: [bd, business decline, customer decline]
+
+  technical_decline_rate:
+    label: Technical Decline Rate
+    type: ratio
+    base: v_attempts
+    numerator: "count(*) filter (where is_technical_decline)"
+    denominator: "count(*) filter (where is_resolved)"
+    denominator_note: >
+      Our side: terminal, connectivity, gateway, acquirer, switch or issuer
+      system. A technical decline is a payment that should have succeeded.
+    format: percent
+    decimals: 2
+    decomposable: true
+    higher_is_better: false
+    synonyms: [td, technical decline, system failure]
+
+  txn_count:
+    label: Attempts
+    type: count
+    base: v_attempts
+    expr: "count(*)"
+    format: number
+    decimals: 0
+    higher_is_better: null
+    synonyms: [volume, attempts, transactions, count, txns]
+
+  gmv:
+    label: GMV (successful)
+    type: sum
+    base: v_attempts
+    expr: "sum(success_amount)"
+    denominator_note: Successful attempts only; failed and pending contribute zero.
+    format: currency
+    decimals: 0
+    higher_is_better: true
+    synonyms: [gross merchandise value, revenue, sales, value, turnover, money]
+
+  value_lost:
+    label: Value Lost to Failures
+    type: sum
+    base: v_attempts
+    expr: "sum(failed_amount)"
+    format: currency
+    decimals: 0
+    higher_is_better: false
+    synonyms: [lost value, failed value, money lost, lost revenue]
+
+  avg_ticket:
+    label: Average Ticket Size
+    type: avg
+    base: v_attempts
+    expr: "avg(amount)"
+    format: currency
+    decimals: 2
+    higher_is_better: null
+    synonyms: [ticket size, average amount, aov]
+
+  avg_latency_ms:
+    label: Average Latency
+    type: avg
+    base: v_attempts
+    expr: "avg(latency_ms)"
+    format: number
+    decimals: 0
+    higher_is_better: false
+    synonyms: [latency, response time, speed]
+
+  settled_amount:
+    label: Settled Amount
+    type: sum
+    base: v_settlements
+    expr: "sum(net_amount)"
+    format: currency
+    decimals: 0
+    higher_is_better: true
+    synonyms: [payout, settlement value, net settled]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DIMENSIONS — every one is a plain column on the view. No join_via anywhere,
+# which is the point: the model writes no JOIN and therefore writes no wrong one.
+# ─────────────────────────────────────────────────────────────────────────────
+dimensions:
+
+  merchant_id:
+    label: Merchant
+    table: v_attempts
+    column: merchant_id
+    synonyms: [merchant, merchant id, store, outlet]
+    rbac_scope: true
+    decomposable: true
+
+  merchant_name:
+    label: Merchant name
+    table: v_attempts
+    column: merchant_name
+    synonyms: [merchant name, store name]
+
+  region:
+    label: Region
+    table: v_attempts
+    column: region
+    synonyms: [region, zone, area]
+    rbac_scope: true
+    decomposable: true
+
+  state:
+    label: State
+    table: v_attempts
+    column: state
+    synonyms: [state]
+    decomposable: true
+
+  city:
+    label: City
+    table: v_attempts
+    column: city
+    synonyms: [city, town, location]
+    decomposable: true
+
+  merchant_category:
+    label: Merchant category
+    table: v_attempts
+    column: merchant_category
+    synonyms: [category, vertical, segment, industry]
+    decomposable: true
+
+  merchant_tier:
+    label: Merchant tier
+    table: v_attempts
+    column: merchant_tier
+    synonyms: [tier, merchant size]
+    decomposable: true
+
+  risk_band:
+    label: Risk band
+    table: v_attempts
+    column: risk_band
+    synonyms: [risk, risk tier, risk band]
+
+  issuer_bank:
+    label: Issuing bank
+    table: v_attempts
+    column: issuer_bank
+    synonyms: [issuer, issuing bank, bank, customer bank]
+    nullable: true
+    null_label: (unknown issuer)
+    decomposable: true
+
+  acquirer_bank:
+    label: Acquiring bank
+    table: v_attempts
+    column: acquirer_bank
+    synonyms: [acquirer, acquiring bank, processor]
+    decomposable: true
+
+  payment_method:
+    label: Payment method
+    table: v_attempts
+    column: payment_method
+    synonyms: [method, rail, payment mode, instrument, upi, card, netbanking, wallet]
+    decomposable: true
+
+  card_network:
+    label: Card network
+    table: v_attempts
+    column: card_network
+    synonyms: [network, scheme, visa, mastercard, rupay]
+
+  card_type:
+    label: Card type
+    table: v_attempts
+    column: card_type
+    synonyms: [credit, debit, card type]
+
+  entry_mode:
+    label: Entry mode
+    table: v_attempts
+    column: entry_mode
+    synonyms: [entry, capture mode, tap, swipe, chip, qr, online]
+    decomposable: true
+
+  terminal_id:
+    label: Terminal
+    table: v_attempts
+    column: terminal_id
+    synonyms: [terminal, device, pos, machine]
+
+  terminal_health:
+    label: Terminal health
+    table: v_attempts
+    column: terminal_health
+    synonyms: [health, device health, terminal condition]
+    decomposable: true
+
+  terminal_connectivity:
+    label: Terminal connectivity
+    table: v_attempts
+    column: terminal_connectivity
+    synonyms: [connectivity, sim, network link, link]
+
+  status:
+    label: Status
+    table: v_attempts
+    column: status
+    synonyms: [status, outcome, result]
+
+  failure_code:
+    label: Failure code
+    table: v_attempts
+    column: failure_code
+    synonyms: [failure code, error code, decline code, reason code]
+    nullable: true
+    null_label: (none)
+    implies_filter: "status = 'FAILED'"
+    decomposable: true
+
+  failure_category:
+    label: Failure category
+    table: v_attempts
+    column: failure_category
+    synonyms: [failure category, error category, reason]
+    implies_filter: "status = 'FAILED'"
+
+  decline_type:
+    label: Decline type
+    table: v_attempts
+    column: decline_type
+    synonyms: [decline type, business or technical]
+    implies_filter: "status = 'FAILED'"
+    decomposable: true
+
+  failure_owner:
+    label: Failure owner
+    table: v_attempts
+    column: failure_owner
+    synonyms: [owner, whose fault, responsible party]
+    implies_filter: "status = 'FAILED'"
+
+  journey_step_label:
+    label: Journey step
+    table: v_attempts
+    column: journey_step_label
+    synonyms: [journey step, step, stage, where it breaks]
+    implies_filter: "status = 'FAILED'"
+    decomposable: true
+
+  is_retriable:
+    label: Retriable
+    table: v_attempts
+    column: is_retriable
+    synonyms: [retriable, retryable, worth retrying]
+
+  is_retry:
+    label: Is a retry
+    table: v_attempts
+    column: is_retry
+    synonyms: [retry, repeat attempt]
+
+  settlement_status:
+    label: Settlement status
+    table: v_settlements
+    column: settlement_status
+    synonyms: [settlement status, payout status]
+
+# No joins. Everything is pre-joined inside the views.
+joins: []
+
+allowlist:
+  tables:
+    - v_attempts
+    - v_settlements
+  functions_denied:
+    - read_csv
+    - read_csv_auto
+    - read_parquet
+    - read_json
+    - read_json_auto
+    - glob
+    - copy
+    - install
+    - load
+    - attach
+    - detach
+    - pragma
+    - set
+    - reset
+    - export
+    - import
+    - system
+    - shell
+    - getenv
+    - sniff_csv
+    - parquet_scan
+    - csv_scan
+    - duckdb_settings
+    - duckdb_extensions
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RBAC — same roles, same claims, anchored on the VIEW. This is the security
+# fix described at the top of this file.
+# ─────────────────────────────────────────────────────────────────────────────
+rbac:
+  roles:
+
+    cxo:
+      label: CXO / Leadership
+      row_scope: null
+      masked_columns: []
+      denied_metrics: []
+      persona: >
+        You are presenting to a payments business leader. Lead with the single most
+        important business implication. Quantify in percentage points and absolute
+        volume. Be decisive about what is and is not proven.
+
+    regional_manager:
+      label: Regional Manager
+      row_scope:
+        dimension: region
+        claim: region
+        anchor_table: v_attempts
+      masked_columns: []
+      denied_metrics: [settled_amount]
+      persona: >
+        You are supporting a regional manager. Frame findings around the merchants and
+        banks in their region. Compare against the region's own history, not other regions.
+
+    merchant_user:
+      label: Merchant User
+      row_scope:
+        dimension: merchant_id
+        claim: merchant_id
+        anchor_table: v_attempts
+        table: v_attempts
+      masked_columns:
+        - v_attempts.merchant_name
+        - v_attempts.terminal_id
+      denied_metrics: []
+      persona: >
+        You are supporting a single merchant looking at their own payment performance.
+        Never reference other merchants by name. Offer category benchmarks instead.
+
+    analyst:
+      label: Data Analyst
+      row_scope: null
+      masked_columns:
+        - v_attempts.terminal_id
+      denied_metrics: []
+      persona: >
+        You are talking to a data analyst. Be precise about grain, denominators and
+        join fan-out. Surface data-quality concerns prominently and do not round away
+        detail that affects interpretation.
+
+# Carried over so the loader is satisfied and so v2 can surface the same caveats.
+# Checks the pipeline runs against the window an answer actually used, and
+# reports to the reader. Thresholds live here rather than in code so the
+# wording and the trip point are reviewed together.
+#
+# Every probe is an ordinary guarded query over the VIEWS. v1's duplicate
+# check counted rows in fact_transactions; v2's allowlist blocks the raw
+# tables and that is not weakened for a background probe, so the check
+# verifies the guarantee instead of counting what was removed — arguably the
+# better check, since it fails loudly if de-duplication ever breaks.
+data_quality:
+  duplicate_txn_ids:
+    table: v_attempts
+    severity: warn
+    expect_zero: true
+    note: >
+      fact_transactions contains a planted double-ingest window. v_attempts is
+      de-duplicated by txn_id keeping the latest ingested_at, so each attempt is
+      counted once. This check confirms none survived into the answer.
+    message_pass: >
+      No duplicate attempts in this window — the view de-duplicates by txn_id,
+      so every attempt is counted once.
+    message_fail: >
+      {n} txn_id(s) appear more than once in this window despite the view's
+      de-duplication. Counts in this answer are inflated.
+  null_issuer:
+    table: v_attempts
+    column: issuer_bank
+    severity: warn
+    threshold: 0.005
+    note: >
+      A share of attempts carry no issuer attribution. Segment rows broken down
+      by issuing bank will not sum to the overall total.
+    message_fail: >
+      {pct} of attempts in this window have no {column} recorded. They are
+      excluded from any {column} breakdown but counted in the overall total, so
+      the segment rows will not sum to the total.
+  partial_days:
+    table: v_attempts
+    severity: warn
+    threshold: 0.85
+    note: >
+      The most recent 2 days are only partially ingested. A window ending inside
+      that period understates volume.
+    message_fail: >
+      The last {days} day(s) of this window are only partially ingested
+      ({pct} of a typical day). Volume is understated and a downward trend at
+      the right-hand edge may not be real.
+  negative_amount:
+    table: v_attempts
+    severity: info
+    message_fail: >
+      {n} attempt(s) in this window carry a negative amount (refund corrections
+      posted against the original rail). They are included in counts and in any
+      amount total.
+
+# Two sources, one metric. When they disagree the answer states the documented
+# precedence and quantifies the gap — it never averages them and never quietly
+# picks the larger.
+reconciliation:
+  metric: txn_count
+  left: v_attempts
+  right: v_settlements
+  severity: warn
+  tolerance: 0.02
+  precedence: v_attempts
+  reason: >
+    Transactions are the system of record for attempt counts. Settlements are
+    batched, can lag a day, and exclude anything not yet settled, so a gap is
+    expected at the edges of a window and only meaningful when it is large.
+  message_fail: >
+    Transactions and settlements disagree on attempt counts for {n} merchant(s)
+    in this window, worst {worst_id} at {worst_pct}. Counted from
+    {precedence}, which is the system of record.
+
+intents:
+  single_value: {label: A single number}
+  breakdown:    {label: A number per segment}
+  trend:        {label: A number over time}
+  compare:      {label: Two periods or two segments side by side}
+  rank:         {label: Ordered segments, best or worst first}
+  explain_change: {label: Why a number moved}
+  detail:       {label: Individual rows}
+
+time_grains:
+  hour:  {sql: "date_trunc('hour', txn_ts)"}
+  day:   {sql: "date_trunc('day', txn_ts)"}
+  week:  {sql: "date_trunc('week', txn_ts)"}
+  month: {sql: "date_trunc('month', txn_ts)"}

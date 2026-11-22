@@ -1,0 +1,160 @@
+# Industry context for the knowledge base.
+#
+# WHAT THIS FILE IS AND IS NOT
+# ----------------------------
+# It is NOT the authority on what PayLens computes. That authority is
+# `paylens2/schema/views.yaml`, because the expressions there are the ones
+# check 10d enforces in generated SQL. A definition here that disagreed with
+# the semantic model would put the knowledge base at odds with the guard.
+#
+# It IS the context around those definitions: how the payments industry words
+# the same ideas, where the industry disagrees with itself, and where PayLens
+# made a specific choice. Every entry carries a source, and `contrast` states
+# plainly where PayLens differs rather than papering over it.
+#
+# The denominator is the live example. Nobody in the industry agrees on it, and
+# none of the public definitions address unresolved attempts at all — which is
+# exactly the choice PayLens had to make.
+
+version: 1
+
+entries:
+
+  - id: ind_auth_rate_basic
+    term: Authorisation rate (industry definition)
+    tags: [success_rate, auth rate, approval rate, acceptance rate, formula]
+    says: >
+      The payments industry defines the authorisation rate as approved
+      transactions divided by attempted transactions. Checkout.com's worked
+      example: 1,000 attempts, 950 approved, a 95% authorisation rate. The terms
+      authorisation rate, approval rate, acceptance rate and auth rate are used
+      interchangeably by different providers for this same quantity.
+    contrast: >
+      PayLens calls this the success rate and does NOT divide by all attempts.
+      It divides by RESOLVED attempts — successes plus failures — so a payment
+      still in flight is not counted as one that failed.
+    sources:
+      - https://www.checkout.com/blog/what-are-authorization-rates
+      - https://www.paypal.com/brc/article/optimize-authorization-rates
+
+  - id: ind_gross_vs_net
+    term: Gross versus net authorisation rate
+    tags: [success_rate, denominator, retries, formula, gross, net]
+    says: >
+      Providers report two different numbers under one name. A gross
+      authorisation rate counts every message sent to the issuer, retries
+      included. A net rate counts the outcome per underlying transaction. Adyen
+      gives the case that separates them: one payment that fails three times and
+      succeeds on the fourth is a 100% net rate and a 25% gross rate. Adyen
+      reports gross by default.
+    contrast: >
+      PayLens is closest to GROSS: v_attempts holds one row per de-duplicated
+      attempt and a retry is its own attempt, carrying is_retry and
+      original_txn_id. So a figure from PayLens is not comparable with a
+      provider quoting a net rate without saying so.
+    sources:
+      - https://www.adyen.com/knowledge-hub/payment-acceptance-rate
+
+  - id: ind_denominator_disagreement
+    term: Why two providers quote different success rates
+    tags: [success_rate, denominator, benchmark, comparison, formula]
+    says: >
+      The denominator is where providers differ, not the numerator. Transactions
+      blocked by fraud screening before they ever reach the issuer may or may not
+      be counted. Nuvei's framing is that one approval-rate number is really five
+      separate decisions stacked together, which is why two accurate figures from
+      two providers can differ by several points on identical traffic.
+    contrast: >
+      PayLens has no fraud-screening stage, so that particular ambiguity does not
+      arise here. Its own denominator choice — excluding PENDING — is the
+      equivalent decision, and it is stated rather than assumed.
+    sources:
+      - https://www.nuvei.com/posts/your-approval-rate-is-one-number-covering-five-decisions
+      - https://www.adyen.com/knowledge-hub/payment-acceptance-rate
+
+  - id: ind_npci_bd_td
+    term: NPCI business and technical declines
+    tags: [business_decline_rate, technical_decline_rate, npci, upi, india, bd, td]
+    says: >
+      NPCI publishes UPI declines in two buckets. A business decline (BD) is a
+      decline attributable to a business decision by a participant in the
+      transaction — insufficient funds, limits, a blocked account. A technical
+      decline (TD) comes from technical shortcomings: connectivity, switch
+      unavailability, or incorrect message data elements. NPCI publishes these
+      per bank on its BD/TD and uptime statistics page.
+    contrast: >
+      PayLens uses the same split, as dim_failure_code.decline_type, and extends
+      it beyond UPI to cards, netbanking, wallets and EMI — where NPCI publishes
+      nothing. Only the UPI figures in this dataset are calibrated to published
+      statistics; the rest are industry-typical estimates and are labelled so.
+    sources:
+      - https://www.npci.org.in/statistics/bd-td-and-uptime
+
+  - id: ind_td_targets
+    term: What counts as a good decline rate
+    tags: [benchmark, technical_decline_rate, business_decline_rate, target, good]
+    says: >
+      RBI asked NPCI to bring technical declines below 1% and business declines
+      below 5%, and banks above 10% BD were told to run customer literacy
+      campaigns. NPCI's CEO said in late 2024 that TD had fallen to roughly
+      0.7-0.8%, down from 8-10% in 2016. Bank-level figures still vary widely.
+    contrast: >
+      These are UPI targets for issuers, not merchant targets and not card
+      targets. A merchant comparing its own blended rate against them is
+      comparing two different things. PayLens will not call a number good or bad
+      on its own; it reports where the number sits and what moved it.
+    sources:
+      - https://www.npci.org.in/statistics/bd-td-and-uptime
+
+  - id: ind_soft_hard_decline
+    term: Soft and hard declines
+    tags: [retriable, retry, decline, failure_code, soft, hard]
+    says: >
+      A soft decline is a temporary refusal — insufficient funds, a timeout —
+      that may succeed if retried. A hard decline is permanent: a stolen card, a
+      closed account, and retrying it will not help. The distinction drives retry
+      policy: Visa's rules allow up to 15 retries in 30 days on a decline the
+      issuer cannot approve right now, and none on one it will never approve.
+      Beware that the term is overloaded — Adyen's acquirer-response docs use
+      "soft decline" for a suspected-fraud refusal, which is not Nuvei's meaning.
+    contrast: >
+      PayLens carries this as dim_failure_code.is_retriable rather than the words
+      soft and hard, precisely because the words are used for two different
+      things by different providers.
+    sources:
+      - https://www.nuvei.com/posts/how-to-improve-payment-approval-rates-across-the-entire-transaction-lifecycle
+      - https://docs.adyen.com/development-resources/raw-acquirer-responses
+
+  - id: ind_network_tokens
+    term: Network tokenisation and authorisation uplift
+    tags: [is_tokenized, tokenization, uplift, improve, card]
+    says: >
+      Replacing a stored card number with a network token typically lifts
+      authorisation rates, because the token stays valid when the underlying card
+      is reissued. Nuvei reports uplifts of up to 2.1%. Stripe's analytics
+      glossary defines the uplift specifically as successful payments on network
+      tokens whose underlying card details changed within 180 days.
+    contrast: >
+      PayLens records is_tokenized per attempt, so the uplift can be measured on
+      your own traffic rather than taken from a vendor figure. The measured
+      difference here is not causal evidence — tokenised traffic may differ in
+      other ways.
+    sources:
+      - https://www.nuvei.com/posts/your-approval-rate-is-one-number-covering-five-decisions
+      - https://docs.stripe.com/payments/analytics/glossary
+
+  - id: ind_mix_effect
+    term: Simpson's paradox in payment mix
+    tags: [mix_vs_rate, decomposition, drop, why, trend]
+    says: >
+      An aggregate rate can fall while every underlying segment holds steady or
+      improves, if traffic shifts toward a segment that was always weaker. This
+      is Simpson's paradox. The arithmetic: overall rate is the volume-weighted
+      mean of segment rates, so it moves when either the rates move (rate effect)
+      or the weights move (mix effect). Reporting the aggregate alone cannot tell
+      the two apart, and they have different owners and different fixes.
+    contrast: >
+      The classic PayLens pipeline decomposes this explicitly. v2 does not — free
+      SQL rarely produces the shape the decomposition needs — so v2 will describe
+      a shift it can see in the data without claiming the split.
+    sources: []

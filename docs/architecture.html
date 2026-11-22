@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PayLens — Overall Architecture</title>
+<style>
+/* 16:9 slide at 96dpi = 1280x720. Printed with Chrome --print-to-pdf. */
+@page { size: 13.333in 7.5in; margin: 0; }
+/* One page, always: a slide that silently spills onto a second
+   sheet is worse than one that is slightly tight. */
+html,body{ overflow:hidden; }
+
+/* Pine Labs house colours, taken from the product's own stylesheet:
+   Pine Green #003323 and Mint #50D387 are the brand, everything else is paper.
+   The amber stays as the one off-hue, exactly as it was, because the API tier
+   and the reasoning layer need to read as different kinds of thing. */
+:root{
+  --ink:#0d1614; --hdr1:#003323; --hdr2:#3f8f66; --brand:#003323;
+  --ui:#003323; --api:#b07a05; --stage:#0f9960; --model:#8a6a3d; --store:#2f7d57;
+  --cardbg:#f4f8f5; --pillbg:#e9f2ec; --pillbg2:#faf1dd;
+  --pine:#003323; --mint:#50d387; --deep:#0b6b45;
+  --band:#c9c9c9;
+}
+*{ box-sizing:border-box; margin:0; padding:0; }
+html,body{ width:1280px; height:720px; }
+body{
+  font-family:"Segoe UI Variable Display","Segoe UI",system-ui,
+              "Helvetica Neue",Arial,sans-serif;
+  color:var(--ink);
+  background:#fff;
+  -webkit-print-color-adjust:exact;
+  print-color-adjust:exact;
+  display:flex; flex-direction:column;
+}
+
+/* ── header ─────────────────────────────────────────────────────────── */
+header{
+  height:50px; flex:0 0 50px; position:relative;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:0 26px 0 30px;
+  background:linear-gradient(100deg,var(--hdr1) 0%,var(--hdr1) 34%,var(--hdr2) 100%);
+  clip-path:polygon(0 0,100% 0,100% 100%,0 100%);
+}
+header h1{
+  font-size:17.5px; font-weight:800; letter-spacing:.055em; color:#fff;
+  text-transform:uppercase;
+}
+.brand{
+  font-size:22px; font-weight:900; letter-spacing:-.012em; color:var(--brand);
+  background:#fff; padding:3px 13px; border-radius:5px;
+}
+.brand em{ font-style:normal; color:#1d7a55; }
+
+/* ── layout ─────────────────────────────────────────────────────────── */
+/* min-height:0 is load-bearing. A flex item defaults to min-height:auto,
+   so `main` refuses to shrink below its content and pushes the chapter
+   nav off the bottom of the slide instead of fitting inside it. */
+main{ flex:1; min-height:0; padding:7px 20px 0; display:flex;
+      flex-direction:column; gap:4px; }
+
+.layer{ position:relative; border:1.4px dashed #b9b9b9; border-radius:11px;
+        padding:10px 10px 7px; }
+.layer > .label{
+  position:absolute; top:-9px; left:50%; transform:translateX(-50%);
+  background:#fff; padding:0 12px; font-size:11px; font-weight:700;
+  letter-spacing:.012em; color:#3a3a3a;
+}
+.row{ display:grid; gap:8px; }
+.r4{ grid-template-columns:repeat(4,1fr); }
+.r3{ grid-template-columns:1.06fr 1fr 1.04fr; }
+
+/* ── cards ──────────────────────────────────────────────────────────── */
+.card{ border:1.3px solid #cfe0d5; border-radius:10px; background:var(--cardbg);
+       padding:6px; display:flex; flex-direction:column; gap:4px; }
+.card.store{ border-color:#f3c3c8; }
+.card.reason{ border-color:#eccf9a; background:#fdf7ea; }
+
+.head{
+  display:flex; align-items:center; gap:7px;
+  background:var(--ui); color:#fff; border-radius:7px;
+  padding:4px 8px; font-size:11px; font-weight:750; letter-spacing:.004em;
+}
+.head.api  { background:var(--api);   color:#4a3208; }
+.head.stage{ background:var(--stage); }
+.head.store{ background:var(--store); color:#fff; }
+.head.reason{ background:#c9971a; color:#2f2206; }
+.head svg{ flex:0 0 auto; }
+
+.pills{ display:grid; gap:3.5px; }
+.p2{ grid-template-columns:1fr 1fr; }
+.p1{ grid-template-columns:1fr; }
+.pill{
+  background:var(--pillbg); border:1px solid #d4e4da; border-radius:6px;
+  padding:3.2px 7px; font-size:9.1px; line-height:1.26; font-weight:560;
+  color:#234a3a; text-align:center; display:block;
+}
+.card.reason .pill{ background:var(--pillbg2); border-color:#eddcb8; color:#5e4312; }
+.pill.wide{ grid-column:1 / -1; }
+.pill b{ font-weight:800; }
+.pill .mono{ font-family:"Cascadia Mono",Consolas,"Courier New",monospace;
+             font-size:9px; letter-spacing:-.015em; }
+
+/* the reasoning card's routing lines */
+.route{ display:flex; align-items:center; gap:6px; font-size:9px;
+        color:#5e4312; font-weight:650; padding:0 2px; }
+.route .dash{ flex:1; border-top:1.6px dashed #c08a3c; height:0; }
+.route .dest{ background:var(--pillbg2); border:1px solid #eddcb8;
+              border-radius:6px; padding:3px 7px; font-weight:750; }
+
+/* ── legend + chapter nav ───────────────────────────────────────────── */
+.legend{ display:flex; align-items:center; gap:15px; padding:1px 4px 0;
+         font-size:8.8px; color:#4a4a4a; font-weight:620; }
+.legend span{ display:flex; align-items:center; gap:5px; }
+.dot{ width:9px; height:9px; border-radius:50%; flex:0 0 auto; }
+
+nav{ flex:0 0 38px; display:grid; grid-template-columns:repeat(6,1fr);
+     gap:8px; padding:4px 20px 7px; align-items:end; }
+.tab{ background:#2f7d57; color:#fff; text-align:center; border-radius:5px;
+      padding:7px 2px; font-size:10.3px; font-weight:800; letter-spacing:.045em; }
+.tab.on{ background:var(--pine); padding:11px 2px; border-radius:7px 7px 5px 5px;
+         box-shadow:0 -2px 7px rgba(0,51,35,.28); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Overall Architecture</h1>
+  <div class="brand">PAY<em>LENS</em></div>
+</header>
+
+<main>
+
+  <!-- ── frontend ──────────────────────────────────────────────────── -->
+  <section class="layer">
+    <div class="label">Frontend experience layer</div>
+    <div class="row r4">
+
+      <div class="card">
+        <div class="head">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="2.5" width="13" height="9.5" rx="2" stroke="#fff" stroke-width="1.5"/><path d="M4.5 14.2h7" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>
+          Chat surface
+        </div>
+        <div class="pills p2">
+          <div class="pill">Pine sidebar</div>
+          <div class="pill">5 threads, browser-held</div>
+          <div class="pill">Question pinned on submit</div>
+          <div class="pill">720px answer column</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="3" width="13" height="10" rx="1.6" stroke="#fff" stroke-width="1.5"/><path d="M1.5 6.3h13M6 6.3V13" stroke="#fff" stroke-width="1.3"/></svg>
+          Answer tabs
+        </div>
+        <div class="pills p2">
+          <div class="pill">Result + chart</div>
+          <div class="pill">SQL authored &amp; executed</div>
+          <div class="pill">Evidence pack E1…En</div>
+          <div class="pill">Trace + recoveries</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2 11.5 5.6 7l2.7 2.6L13.8 4" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="13.8" cy="4" r="1.5" fill="#fff"/></svg>
+          Measured progress
+        </div>
+        <div class="pills p1">
+          <div class="pill">SSE: the pipeline's own stage events</div>
+          <div class="pill">Self-repairs surfaced, not hidden</div>
+          <div class="pill">No fixed-timer animation</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5.4" r="2.9" stroke="#fff" stroke-width="1.5"/><path d="M2.6 13.6c.7-2.7 2.8-4 5.4-4s4.7 1.3 5.4 4" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>
+          Identity
+        </div>
+        <div class="pills p2">
+          <div class="pill wide">Sign-in optional — it is a setting, not a gate</div>
+          <div class="pill">4 demo principals</div>
+          <div class="pill">Row filter visible in SQL</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── API ───────────────────────────────────────────────────────── -->
+  <section class="layer">
+    <div class="label">FastAPI orchestration layer &nbsp;·&nbsp; port 8001</div>
+    <div class="row r4">
+
+      <div class="card">
+        <div class="head api">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2.5 4h11M2.5 8h11M2.5 12h7" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/></svg>
+          Ask APIs
+        </div>
+        <div class="pills p1">
+          <div class="pill"><span class="mono">POST /v2/ask</span></div>
+          <div class="pill"><span class="mono">POST /v2/ask/stream</span> — SSE</div>
+          <div class="pill">Role from the session, never the body</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head api">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.2" stroke="#fff" stroke-width="1.5"/><path d="M8 4.8v4.4M8 11.3v.1" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/></svg>
+          Introspection
+        </div>
+        <div class="pills p1">
+          <div class="pill"><span class="mono">GET /v2/health</span></div>
+          <div class="pill"><span class="mono">GET /v2/schema</span> — the exact card</div>
+          <div class="pill"><span class="mono">GET /v2/catalogue</span> — 19 entries</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head api">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="3" y="7" width="10" height="6.5" rx="1.5" stroke="#fff" stroke-width="1.5"/><path d="M5.4 7V5a2.6 2.6 0 0 1 5.2 0v2" stroke="#fff" stroke-width="1.5"/></svg>
+          Auth &amp; principal
+        </div>
+        <div class="pills p1">
+          <div class="pill">Session → verified claims</div>
+          <div class="pill">claims → RBAC principal</div>
+          <div class="pill">A missing claim refuses, never widens</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head api">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M6.4 9.6 9.6 6.4M5.2 7.2 3.6 8.8a2.6 2.6 0 0 0 3.6 3.6l1.6-1.6M10.8 8.8l1.6-1.6a2.6 2.6 0 0 0-3.6-3.6L7.2 5.2" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>
+          Static UI
+        </div>
+        <div class="pills p1">
+          <div class="pill">Own process, own port</div>
+          <div class="pill">Mounted last — <span class="mono">/</span> would shadow the API</div>
+          <div class="pill">charts.js — 797 lines of SVG, no libraries</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── engines ───────────────────────────────────────────────────── -->
+  <section class="layer">
+    <div class="label">GenAI engines &nbsp;·&nbsp; the seven-step pipeline</div>
+    <div class="row r4">
+
+      <div class="card">
+        <div class="head stage">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3 13 12.3 3.7a1.7 1.7 0 0 1 2.4 2.4L5.4 15.4 2 16l.6-3Z" transform="translate(-.6 -1.3)" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
+          1 · Author &nbsp;<span style="opacity:.8">LLM</span>
+        </div>
+        <div class="pills p1">
+          <div class="pill"><b>Six actions:</b> sql · advise · explain<br>decompose · clarify · refuse</div>
+          <div class="pill">Schema card + few-shots + catalogue</div>
+          <div class="pill">Periods pre-resolved to literal dates</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head stage">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 1.6 13.4 4v4c0 3.3-2.3 5.6-5.4 6.4C4.9 13.6 2.6 11.3 2.6 8V4L8 1.6Z" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.8 8.1 7.4 9.7l3-3.2" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          2 · Validate &amp; guard
+        </div>
+        <div class="pills p1">
+          <div class="pill"><b>Check 10</b> — views only · no <span class="mono">SELECT *</span><br>metric formulas verbatim</div>
+          <div class="pill"><b>Nine AST checks</b>, unmodified</div>
+          <div class="pill">RBAC injected, then re-walked</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head stage">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2.4 13.4V7.2M6.8 13.4V3.4M11.2 13.4V9.2" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><path d="M14.2 13.4h-12" stroke="#fff" stroke-width="1.4" stroke-linecap="round"/></svg>
+          3 · Measure &nbsp;<span style="opacity:.8">no LLM</span>
+        </div>
+        <div class="pills p1">
+          <div class="pill">Execute read-only · timeout · row cap</div>
+          <div class="pill"><b>Python computes every number</b><br>→ numbered fact pack E1…En</div>
+          <div class="pill">Mix-vs-rate split · 5 quality probes</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head stage">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="2.4" y="2.4" width="11.2" height="11.2" rx="2" stroke="#fff" stroke-width="1.4"/><path d="M5 6.2h6M5 8.6h6M5 11h3.6" stroke="#fff" stroke-width="1.3" stroke-linecap="round"/></svg>
+          4 · Synthesise &nbsp;<span style="opacity:.8">LLM</span>
+        </div>
+        <div class="pills p1">
+          <div class="pill">Prose from the fact pack only</div>
+          <div class="pill"><b>verify()</b> — a number not measured<br>discards the whole composition</div>
+          <div class="pill">One repair, then the measured answer</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── data & reasoning ──────────────────────────────────────────── -->
+  <section class="layer" style="border-style:none; padding:3px 0 0;">
+    <div class="row r3">
+
+      <div class="card store">
+        <div class="head store">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="4" rx="5.4" ry="2.2" stroke="#fff" stroke-width="1.4"/><path d="M2.6 4v8c0 1.2 2.4 2.2 5.4 2.2s5.4-1 5.4-2.2V4" stroke="#fff" stroke-width="1.4"/><path d="M2.6 8c0 1.2 2.4 2.2 5.4 2.2s5.4-1 5.4-2.2" stroke="#fff" stroke-width="1.2"/></svg>
+          Guarded warehouse
+        </div>
+        <div class="pills p2">
+          <div class="pill wide"><b>DuckDB, opened read-only</b> — 775,957 attempts</div>
+          <div class="pill"><b>v_attempts</b><br>de-duplicated, pre-joined</div>
+          <div class="pill"><b>v_settlements</b><br>payout batches</div>
+          <div class="pill wide">Indicator columns carry the official metric semantics —
+            <span class="mono">is_success</span>, <span class="mono">is_resolved</span>, <span class="mono">is_technical_decline</span></div>
+          <div class="pill wide">The de-duplication lives inside the view, so a query
+            cannot forget a rule it never knew existed</div>
+          <div class="pill wide" style="background:#d9efe3;border-color:#8fcfae;">
+            Raw <span class="mono">fact_*</span> / <span class="mono">dim_*</span> are absent from the allowlist — the model cannot reach them
+          </div>
+        </div>
+      </div>
+
+      <div class="card store">
+        <div class="head store">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 1.8 14 5v6l-6 3.2L2 11V5l6-3.2Z" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/><path d="M2 5l6 3.2L14 5M8 8.2v6" stroke="#fff" stroke-width="1.2"/></svg>
+          Memory &amp; caches
+        </div>
+        <div class="pills p1">
+          <div class="pill"><b>Chroma few-shots</b> — stamped, so a stale<br>example cannot reverse a fix</div>
+          <div class="pill"><b>paylens_knowledge</b> — metric · glossary · industry<br>a second collection, never the few-shot corpus</div>
+          <div class="pill"><b>NLQ→SQL cache</b> — L0 LRU + L1 Chroma<br>keyed on the <i>resolved</i> window</div>
+          <div class="pill" style="background:#d9efe3;border-color:#8fcfae;">
+            The query is cached. <b>The answer never is.</b>
+          </div>
+        </div>
+      </div>
+
+      <div class="card reason">
+        <div class="head reason">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 2.2a4.4 4.4 0 0 0-2.6 7.9v1.7h5.2V10.1A4.4 4.4 0 0 0 8 2.2Z" stroke="#2f2206" stroke-width="1.4" stroke-linejoin="round"/><path d="M6.2 13.4h3.6" stroke="#2f2206" stroke-width="1.5" stroke-linecap="round"/></svg>
+          Shared reasoning layer
+        </div>
+        <div class="route"><span>Author path</span><span class="dash"></span><span class="dest">Qwen 2.5 Coder 32B</span></div>
+        <div class="route"><span>Synthesis path</span><span class="dash"></span><span class="dest">Qwen 2.5 Coder 32B</span></div>
+        <div class="pills p1">
+          <div class="pill">Semantic model anchored on <span class="mono">v_attempts</span><br>— the same guard code, a different target</div>
+          <div class="pill">Personas shape the prose; predicates shape the rows</div>
+          <div class="pill" style="background:#f7edd6;border-color:#e2c893;">
+            <b>No calculator tool.</b> A number from a tool call has<br>no provenance to show beside the answer.
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <div class="legend">
+    <span><i class="dot" style="background:var(--ui)"></i>UI</span>
+    <span><i class="dot" style="background:var(--api)"></i>API</span>
+    <span><i class="dot" style="background:var(--stage)"></i>core pipeline stage</span>
+    <span><i class="dot" style="background:var(--model)"></i>model, persona, or reasoning layer</span>
+    <span><i class="dot" style="background:var(--store)"></i>data store, cache, or persisted memory</span>
+    <span style="margin-left:auto;color:#8a8a8a;font-weight:600;">
+      Two model calls · nine guard checks · every figure computed in Python
+    </span>
+  </div>
+
+</main>
+
+<nav>
+  <div class="tab">OVERVIEW &amp; DATA</div>
+  <div class="tab">DATA QUALITY</div>
+  <div class="tab">SEMANTIC MODEL</div>
+  <div class="tab on">PIPELINE &amp; ARCHITECTURE</div>
+  <div class="tab">EVALUATION METRICS</div>
+  <div class="tab">GUARD &amp; RBAC</div>
+</nav>
+
+</body>
+</html>

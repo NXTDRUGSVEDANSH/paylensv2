@@ -1,0 +1,726 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PayLens — Project Overview</title>
+<link href="https://fonts.googleapis.com/css2?family=Epilogue:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  @page { size: A4; margin: 16mm 15mm 18mm; }
+  @page :first { margin: 0; }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    font-family: Epilogue, system-ui, sans-serif; font-size: 10.5pt; line-height: 1.6;
+    color: #16201b; margin: 0;
+  }
+  h1,h2,h3,h4 { margin: 0; font-weight: 650; letter-spacing: -.01em; color: #06281c; }
+  p { margin: 0 0 10px; }
+  a { color: #0f5c3f; text-decoration: none; }
+  code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .88em;
+         background: #eef2ef; padding: 1px 4px; border-radius: 3px; }
+
+  /* cover */
+  .cover { height: 297mm; background: #003323; color: #fff; padding: 34mm 24mm;
+           display: flex; flex-direction: column; page-break-after: always; }
+  .cover .mark { width: 54px; height: 54px; margin-bottom: 26px; }
+  .cover h1 { color: #fff; font-size: 44pt; line-height: 1.04; letter-spacing: -.03em; }
+  .cover .tag { color: #50D387; font-size: 15pt; font-weight: 500; margin-top: 14px; }
+  .cover .lede { color: rgba(255,255,255,.82); font-size: 12pt; line-height: 1.65;
+                 margin-top: 30px; max-width: 128mm; }
+  .cover .foot { margin-top: auto; color: rgba(255,255,255,.6); font-size: 9.5pt;
+                 border-top: 1px solid rgba(80,211,135,.3); padding-top: 14px; }
+  .cover .foot b { color: #50D387; font-weight: 600; }
+
+  section { page-break-before: always; }
+  section.cont { page-break-before: auto; }
+  h2 { font-size: 20pt; margin-bottom: 4px; line-height: 1.2; }
+  h2 .num { color: #50D387; font-size: 13pt; display: block; font-weight: 700;
+            letter-spacing: .08em; text-transform: uppercase; margin-bottom: 6px; }
+  h3 { font-size: 12.5pt; margin: 22px 0 7px; }
+  .sub { color: #5b6b64; font-size: 11pt; margin-bottom: 20px; }
+
+  .box { background: #f4f7f5; border-left: 3px solid #50D387; padding: 13px 16px;
+         margin: 15px 0; border-radius: 0 7px 7px 0; page-break-inside: avoid; }
+  .box.warn { border-left-color: #B07A05; background: #fdf8ee; }
+  .box.key  { border-left-color: #003323; background: #eef3f0; }
+  .box h4 { font-size: 10.5pt; margin-bottom: 5px; }
+  .box p:last-child { margin-bottom: 0; }
+
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 9.5pt;
+          page-break-inside: avoid; }
+  th { text-align: left; background: #003323; color: #fff; padding: 7px 10px;
+       font-weight: 600; font-size: 9pt; }
+  td { padding: 7px 10px; border-bottom: 1px solid #e3e8e5; vertical-align: top; }
+  tr:nth-child(even) td { background: #f8faf9; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .shot { margin: 16px 0 6px; page-break-inside: avoid; }
+  .shot img { width: 100%; border: 1px solid #d9e0dc; border-radius: 7px; display: block; }
+  .shot .cap { font-size: 9pt; color: #5b6b64; margin-top: 6px; font-style: italic; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .card { border: 1px solid #dde4e0; border-radius: 8px; padding: 13px 15px;
+          page-break-inside: avoid; }
+  .card h4 { font-size: 11pt; margin-bottom: 5px; }
+  .card .role { font-size: 8.5pt; text-transform: uppercase; letter-spacing: .06em;
+                color: #0f5c3f; font-weight: 700; margin-bottom: 4px; }
+  .card p { font-size: 9.5pt; color: #40504a; margin: 0; }
+
+  .big { font-size: 30pt; font-weight: 700; color: #003323; line-height: 1;
+         letter-spacing: -.02em; }
+  .statrow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 18px 0; }
+  .stat { border: 1px solid #dde4e0; border-radius: 8px; padding: 12px; text-align: center; }
+  .stat .v { font-size: 19pt; font-weight: 700; color: #003323; }
+  .stat .l { font-size: 8.5pt; color: #5b6b64; margin-top: 2px; line-height: 1.3; }
+
+  ol.steps { counter-reset: s; list-style: none; padding: 0; }
+  ol.steps li { counter-increment: s; position: relative; padding-left: 30px;
+                margin-bottom: 11px; page-break-inside: avoid; }
+  ol.steps li::before { content: counter(s); position: absolute; left: 0; top: 1px;
+    width: 21px; height: 21px; border-radius: 50%; background: #003323; color: #fff;
+    font-size: 9.5pt; font-weight: 700; display: grid; place-items: center; }
+  ol.steps b { color: #06281c; }
+  ul.tick { list-style: none; padding: 0; }
+  ul.tick li { padding-left: 22px; position: relative; margin-bottom: 7px; }
+  ul.tick li::before { content: "✓"; position: absolute; left: 0; color: #0F9960;
+                       font-weight: 700; }
+  ul.cross li::before { content: "✗"; color: #B07A05; }
+  .q { font-family: ui-monospace, Menlo, monospace; font-size: 9.5pt; background: #06281c;
+       color: #d8f0e2; padding: 11px 14px; border-radius: 7px; margin: 12px 0;
+       white-space: pre-wrap; line-height: 1.55; page-break-inside: avoid; }
+  .q b { color: #50D387; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<!-- ───────────────────────── cover ───────────────────────── -->
+<div class="cover">
+  <svg class="mark" viewBox="0 0 32 32">
+    <path d="M16 3 L29 19 H21.5 L16 11.5 L10.5 19 H3 Z" fill="#50D387"/>
+    <rect x="11.5" y="22" width="9" height="7" rx="1.5" fill="#50D387" opacity=".45"/>
+  </svg>
+  <h1>PayLens</h1>
+  <div class="tag">An AI business analyst for payments data</div>
+  <div class="lede">
+    Ask a question about payment performance in ordinary English. Get an answer that
+    shows its working: the exact query it ran, the data it used, what it proved, what
+    it is only guessing, and what it could not check.
+    <br><br>
+    This document explains what was built and how it behaves — in plain language,
+    for a reader who does not want the engineering detail.
+  </div>
+  <div class="foot">
+    Pine Labs assignment · Enterprise AI Business Analyst<br>
+    <b>138 automated tests passing · 100% on every evaluation measure</b>
+  </div>
+</div>
+
+<!-- ───────────────────────── 1 ───────────────────────── -->
+<section class="cont">
+  <h2><span class="num">Chapter 1</span>The problem this solves</h2>
+  <p class="sub">Why a payments leader cannot get a straight answer today.</p>
+
+  <p>A payments business runs on one number above all others: the <b>success rate</b> —
+  of every payment attempt customers make, how many actually go through. When it falls,
+  somebody has to find out why, quickly.</p>
+
+  <p>Today that means an analyst spends hours finding the right data, writing queries,
+  checking them, and then writing an explanation. By the time the answer arrives the
+  moment has often passed. And the answer usually arrives as a number in a spreadsheet,
+  with no way to tell how much of it to trust.</p>
+
+  <div class="box key">
+    <h4>The question this product answers</h4>
+    <p><i>"Why did our success rate drop last week?"</i> — asked by someone who does not
+    write SQL, answered in under a second, with every number traceable back to the query
+    that produced it.</p>
+  </div>
+
+  <h3>Why this is harder than it looks</h3>
+  <p>There is a trap in this question that catches most analytics tools, and it is worth
+  understanding before anything else, because the whole product is built around it.</p>
+
+  <p>Imagine a shop that sells through two counters. The fast counter serves 90 out of
+  every 100 customers successfully. The slow counter manages only 70. Nothing about
+  either counter changes all week.</p>
+
+  <p>But on Monday, a sign gets moved, and suddenly twice as many customers queue at the
+  slow counter. The shop's overall success rate falls.</p>
+
+  <div class="box">
+    <h4>Nothing broke. The mix of traffic changed.</h4>
+    <p>A tool that ranks counters by success rate reports <i>"the slow counter is
+    failing"</i> — but it was always slow, and nothing about it got worse. A tool that
+    charts each counter over time reports <i>"nothing changed"</i> — but the overall
+    number genuinely fell and somebody must act. <b>Both answers are wrong, in opposite
+    directions.</b></p>
+  </div>
+
+  <p>The right answer is: <i>go and look at who moved the sign.</i> That is a different
+  team, a different fix, and a different level of urgency than "the slow counter is
+  broken". PayLens is built to tell those two situations apart, every time.</p>
+</section>
+
+<!-- ───────────────────────── 2 ───────────────────────── -->
+<section>
+  <h2><span class="num">Chapter 2</span>What it actually does</h2>
+  <p class="sub">One worked example, start to finish.</p>
+
+  <div class="q"><b>You ask:</b>  why did our overall success rate drop last week?</div>
+
+  <p>Under a second later, PayLens answers:</p>
+
+  <div class="q"><b>Success Rate moved −1.33pp (87.93% → 86.60%), and 93% of that
+is traffic mix rather than degraded processing.</b></div>
+
+  <p>And then it shows its working, in four separate parts that are never allowed to
+  blur together:</p>
+
+  <table>
+    <tr><th style="width:27%">Part</th><th>What goes in it</th></tr>
+    <tr><td><b>Observed</b></td><td>Only things the data actually shows. "UPI's share of
+      payments fell from 62% to 55%. Netbanking's rose from 8% to 15%. Neither changed
+      its own success rate by more than 0.1%."</td></tr>
+    <tr><td><b>Hypotheses</b></td><td>Possible explanations, each labelled as
+      <i>unproven</i> with a confidence level. "A checkout or routing change probably
+      pushed customers toward netbanking — but this data shows the shift, not its
+      cause."</td></tr>
+    <tr><td><b>Recommended next steps</b></td><td>What to do, and <b>who owns it</b>.
+      "Audit the checkout and routing configuration — Product / Routing team. Payment
+      processing did not degrade."</td></tr>
+    <tr><td><b>Caveats</b></td><td>What might be wrong with the reading. "2.1% of
+      payments have no bank recorded, so the per-bank breakdown will not add up to the
+      total."</td></tr>
+  </table>
+
+  <div class="box key">
+    <h4>Why the four parts are kept separate</h4>
+    <p>They are four distinct fields in the system, not four paragraphs of text. The AI
+    is <b>structurally unable</b> to slip a guess into the facts section — there is
+    nowhere for it to go. That single design choice is what makes the output safe to act
+    on.</p>
+  </div>
+
+  <div class="shot">
+    <img src="screenshots/8-decomp-dashboard.png" alt="The full answer">
+    <div class="cap">The complete answer: headline, observed facts, hypotheses,
+      recommendation, caveats — then the charts, the query, and the evidence.</div>
+  </div>
+</section>
+
+<!-- ───────────────────────── 3 ───────────────────────── -->
+<section>
+  <h2><span class="num">Chapter 3</span>The engines inside</h2>
+  <p class="sub">Four working parts, each with one job.</p>
+
+  <p>The system is built from four engines. Three are fully built; the fourth was
+  planned and deliberately left out, which is explained in Chapter 10.</p>
+
+  <div class="grid2">
+    <div class="card">
+      <div class="role">Engine 1 · built</div>
+      <h4>The Analyst</h4>
+      <p>Turns your question into a plan, the plan into a database query, checks the
+      query is safe, runs it, and works out what the numbers mean. This is the core of
+      the product and everything else supports it.</p>
+    </div>
+    <div class="card">
+      <div class="role">Engine 2 · built</div>
+      <h4>The Action Engine</h4>
+      <p>Decides what you should <i>do</i> about the answer. Recommendations are chosen
+      from a fixed list of real, possible actions — each with an owning team — rather
+      than invented. The AI cannot suggest something the business cannot do.</p>
+    </div>
+    <div class="card">
+      <div class="role">Engine 3 · built</div>
+      <h4>The Metric Scout</h4>
+      <p>Works out which measure and which time period you meant. Handles the fact that
+      "approval rate", "auth rate" and "SR" are all the same thing, and asks you when
+      the question genuinely is not clear enough to answer.</p>
+    </div>
+    <div class="card">
+      <div class="role">Engine 4 · not built</div>
+      <h4>The Watchtower</h4>
+      <p>Would watch the numbers and flag problems before anyone asks. Designed in full,
+      then cut: the assignment is about answering questions, and this competed with
+      polishing the parts that are graded.</p>
+    </div>
+  </div>
+
+  <h3>How a question travels through the system</h3>
+  <ol class="steps">
+    <li><b>Is this even a question?</b> "Delete all failed transactions" is refused —
+      the system can only read data, never change it.</li>
+    <li><b>What are you actually asking?</b> The measure, the time period and the
+      breakdown are worked out from your words, using a fixed dictionary of what this
+      business measures.</li>
+    <li><b>Are you allowed to see this?</b> Checked before anything else happens.</li>
+    <li><b>Have we answered this before?</b> If so, reuse the known-good query instead
+      of writing a new one.</li>
+    <li><b>Write the query</b> — built from the plan by fixed rules, so there is nothing
+      for the AI to get wrong.</li>
+    <li><b>Check it, nine ways</b>, before it is allowed anywhere near the database.</li>
+    <li><b>Run it</b>, with a time limit and a cap on how much it can return.</li>
+    <li><b>Check the data quality</b> of exactly the tables it touched.</li>
+    <li><b>Do the maths</b> — including the mix-versus-rate split from Chapter 1.</li>
+    <li><b>Write it up</b>, with facts, guesses and actions kept apart.</li>
+  </ol>
+
+  <div class="box">
+    <h4>The AI never does arithmetic</h4>
+    <p>Every number you see was calculated by ordinary program code. The AI chooses
+    <i>which</i> measure to compute and writes the sentences around the result — it is
+    never asked for a figure, so it cannot invent one. This is the single most important
+    rule in the system.</p>
+  </div>
+</section>
+
+<!-- ───────────────────────── 4 ───────────────────────── -->
+<section>
+  <h2><span class="num">Chapter 4</span>The data</h2>
+  <p class="sub">Invented transactions, real-world behaviour.</p>
+
+  <p>Real payment records are private — no company publishes them. So the 777,757
+  payments in this system were generated by a program. That raises an obvious question:
+  if the data is made up, does any of this mean anything?</p>
+
+  <p>It does, because of how it was made up. India's national payments body, <b>NPCI</b>,
+  publishes monthly statistics on how often payments fail and why. The generator was
+  tuned until its invented data reproduces those published figures exactly.</p>
+
+  <table>
+    <tr><th>Measure</th><th class="n">In this data</th><th class="n">NPCI published</th></tr>
+    <tr><td>Customer-side failures (wrong PIN, insufficient funds)</td><td class="n">10.89%</td><td class="n">10.88%</td></tr>
+    <tr><td>System-side failures (bank or network down)</td><td class="n">0.24%</td><td class="n">0.24%</td></tr>
+    <tr><td>Overall UPI approval rate</td><td class="n">88.87%</td><td class="n">88.88%</td></tr>
+  </table>
+
+  <p>The banks are real too — HDFC, ICICI, State Bank of India, and so on. The three
+  banks NPCI named as outliers carry their actual published failure rates. A payments
+  professional reading this data would recognise it as plausible.</p>
+
+  <div class="box warn">
+    <h4>What is honestly <i>not</i> real</h4>
+    <p>NPCI publishes failure rates for UPI only. The rates for cards, netbanking,
+    wallets and EMI are industry-typical estimates, and they are labelled as such
+    everywhere rather than being passed off as published figures. The split of business
+    between payment methods is also a choice, not a national statistic.</p>
+  </div>
+
+  <h3>Problems planted on purpose</h3>
+  <p>Real data is messy, so six specific faults were built into this data deliberately —
+  because a system that has only ever seen clean data has never really been tested.</p>
+
+  <table>
+    <tr><th style="width:38%">Planted fault</th><th>What it tests</th></tr>
+    <tr><td>1,800 payments recorded twice</td><td>Does it notice and avoid double-counting?</td></tr>
+    <tr><td>2.3% of payments missing the bank name</td><td>Does it warn that a breakdown will not add up?</td></tr>
+    <tr><td>Two systems disagreeing on the same count</td><td>Does it pick one and explain why, or quietly average them?</td></tr>
+    <tr><td>47 refunds mislabelled as payments</td><td>Does it exclude them from revenue?</td></tr>
+    <tr><td>The last two days only partly loaded</td><td>Does it avoid reporting a fake decline?</td></tr>
+    <tr><td>The traffic shift from Chapter 1</td><td>Does it tell a mix change from a real failure?</td></tr>
+  </table>
+
+  <p>A check runs every time the data is rebuilt and <b>refuses to let the system start</b>
+  if any of these have drifted. The headline claim cannot quietly become untrue.</p>
+</section>
+
+<!-- ───────────────────────── 5 ───────────────────────── -->
+<section>
+  <h2><span class="num">Chapter 5</span>Keeping it honest</h2>
+  <p class="sub">Three habits that make an AI answer trustworthy.</p>
+
+  <h3>It tells you when it is not sure</h3>
+  <p>Every answer carries a confidence score, and that score is <b>arithmetic, not an
+  opinion</b>. Points come off for specific, checkable reasons:</p>
+
+  <table>
+    <tr><th>Reason</th><th class="n">Cost</th></tr>
+    <tr><td>A data-quality problem affects the tables used</td><td class="n">−0.15</td></tr>
+    <tr><td>Part of the time period has not finished loading</td><td class="n">−0.20</td></tr>
+    <tr><td>You did not specify something, so it assumed</td><td class="n">−0.15</td></tr>
+    <tr><td>A segment in the answer is based on very few payments</td><td class="n">−0.10</td></tr>
+    <tr><td>The query failed first time and had to be repaired</td><td class="n">−0.25</td></tr>
+  </table>
+
+  <p>That last one is worth noticing. Most systems hide a retry. This one treats it as a
+  reason to trust the answer less, and says so.</p>
+
+  <h3>It warns you about the data, in the answer itself</h3>
+  <p>Data-quality warnings are not on a separate dashboard nobody opens. They appear
+  underneath the answer that is affected — and they explain the consequence, not just the
+  fault:</p>
+  <div class="q">2.10% of attempts in this window are not attributed to an issuer bank.
+They are excluded from any issuer breakdown but included in the overall
+total — <b>so segment rows will not sum to the total.</b></div>
+  <p>That final clause answers the exact question a careful reader is about to ask.</p>
+
+  <h3>When two systems disagree, it says so</h3>
+  <p>The settlement system and the transaction system disagree about how many payments
+  one merchant made. PayLens does not quietly pick the bigger number or split the
+  difference. It reports both, says which it used, and explains why:</p>
+  <div class="q">Settlements reports 332 attempts for M-1042; transactions counts 375
+(+11.5%). Settlements excludes refunded and held batches.
+<b>Reported figure uses transactions.</b></div>
+
+  <div class="shot">
+    <img src="screenshots/4-dataquality.png" alt="Data quality warnings">
+    <div class="cap">One ordinary question, three different data-quality warnings — all
+      raised automatically, none of which the user had to know to ask about.</div>
+  </div>
+</section>
+
+<!-- ───────────────────────── 6 ───────────────────────── -->
+<section>
+  <h2><span class="num">Chapter 6</span>Keeping it safe</h2>
+  <p class="sub">Who can see what, and what the system refuses to do.</p>
+
+  <h3>Signing in</h3>
+  <p>The system has real accounts with passwords. Critically, <b>your access level comes
+  from your account, not from anything you send</b>. There is no way to ask for more
+  access than you have been given.</p>
+
+  <table>
+    <tr><th>Account</th><th>Can see</th></tr>
+    <tr><td>Priya — CXO</td><td>Everything</td></tr>
+    <tr><td>Rahul — Regional Manager</td><td>Only merchants in the South region</td></tr>
+    <tr><td>Asha — Analyst</td><td>All payments, but some identifying columns hidden</td></tr>
+    <tr><td>Kanaka Stores — Merchant</td><td>Only their own payments</td></tr>
+  </table>
+
+  <div class="shot">
+    <img src="screenshots/9-login.png" alt="Sign-in screen">
+    <div class="cap">The sign-in screen. Demo passwords are shown on purpose — a real
+      deployment creates no accounts and connects to a company directory instead.</div>
+  </div>
+
+  <h3>Restrictions are built into the question, not asked for politely</h3>
+  <p>When Kanaka Stores asks a question, the restriction "only this merchant" is written
+  into the database query itself before it runs. It is not an instruction to the AI that
+  it might forget or be talked out of.</p>
+
+  <div class="box key">
+    <h4>A wrong answer is worse than a refusal</h4>
+    <p>If a merchant asks <i>"compare my success rate with Merchant M-2201"</i>, the
+    system could filter out the other merchant and return something. But that something
+    would look like an answer and be wrong. So it refuses instead, names the merchant it
+    cannot show, and offers what it <i>can</i> do — compare against an anonymous category
+    average.</p>
+  </div>
+
+  <div class="shot">
+    <img src="screenshots/3-refusal.png" alt="Access refusal">
+    <div class="cap">The refusal explains itself rather than silently returning a
+      narrowed answer.</div>
+  </div>
+
+  <h3>It cannot change anything</h3>
+  <p>Ask it to delete, update or drop anything and it declines — it has no ability to
+  write to the database at all. Every query it generates is checked nine separate ways
+  before it runs: that it only reads, that it only touches approved tables and columns,
+  that your access restriction is genuinely present and has not been neutralised, and
+  that it will not run away with the database.</p>
+  <p>Ten deliberate attack attempts are tested automatically on every change. <b>All ten
+  are blocked, every time.</b></p>
+</section>
+
+<!-- ───────────────────────── 7 ───────────────────────── -->
+<section>
+  <h2><span class="num">Chapter 7</span>Asking back</h2>
+  <p class="sub">When a question cannot be answered as asked.</p>
+
+  <p>"What is our success rate?" sounds like a complete question. It is not. Last week,
+  last month and last quarter are three different numbers, and picking one silently
+  produces an answer the reader has no way of knowing is the wrong one.</p>
+
+  <p>So PayLens asks — but politely, and with the sensible answer already highlighted so
+  it costs one click rather than a conversation.</p>
+
+  <div class="shot">
+    <img src="screenshots/7-clarify.png" alt="Clarification">
+    <div class="cap">Concrete options with real dates, the recommended one marked. Each
+      button asks the complete question for you.</div>
+  </div>
+
+  <p>It does the same when it cannot tell which measure you mean — "how are we doing?"
+  could be about success rate, volume, revenue or speed, and those can move in opposite
+  directions at the same time.</p>
+
+  <div class="box">
+    <h4>It does not ask about everything</h4>
+    <p>Only when the missing piece genuinely changes the answer. Anything it can
+    reasonably assume, it assumes — and then tells you what it assumed, with the
+    alternative one click away. Being asked four questions before getting a number is its
+    own kind of unhelpful.</p>
+  </div>
+</section>
+
+<!-- ───────────────────────── 8 ───────────────────────── -->
+<section>
+  <h2><span class="num">Chapter 8</span>It remembers</h2>
+  <p class="sub">Why the second person to ask gets an instant answer.</p>
+
+  <p>PayLens keeps a memory of questions it has answered correctly before. When a
+  question comes in, it checks that memory first.</p>
+
+  <p>The clever part is that it matches on <i>meaning</i>, not wording. "Approval rate by
+  bank last week" and "success rate by issuer bank last week" are the same question asked
+  two ways — and PayLens recognises that, reusing the known-good query instead of writing
+  a new one.</p>
+
+  <table>
+    <tr><th>What happens</th><th>When</th><th class="n">Speed</th></tr>
+    <tr><td>Reuses the exact stored query</td><td>Same question, however worded</td><td class="n">instant</td></tr>
+    <tr><td>Writes a new query, using similar past ones as examples</td><td>Related but different</td><td class="n">fast</td></tr>
+    <tr><td>Writes a new query from scratch</td><td>Genuinely new question</td><td class="n">normal</td></tr>
+  </table>
+
+  <div class="box warn">
+    <h4>The trap that was avoided</h4>
+    <p>"Success rate <i>last week</i>" and "success rate <i>last month</i>" read almost
+    identically to a computer comparing sentences. A naive memory would confidently
+    answer one with the other's query — and because it skipped the thinking step, nothing
+    downstream would notice.</p>
+    <p>PayLens strips the time period out of the sentence before comparing, and handles
+    it separately and exactly. The two questions share one memory entry, and the period is
+    substituted in. A likely error became an impossible one.</p>
+  </div>
+
+  <p>A reused answer still goes through every safety check and every data-quality check.
+  <b>Memory skips the thinking, never the checking.</b></p>
+
+  <div class="shot">
+    <img src="screenshots/5-rag-probe.png" alt="Memory inspection">
+    <div class="cap">The memory can be inspected directly: what the question became, which
+      stored entry matched, and exactly which conditions passed or failed.</div>
+  </div>
+</section>
+
+<!-- ───────────────────────── 9 ───────────────────────── -->
+<section>
+  <h2><span class="num">Chapter 9</span>How it performs</h2>
+  <p class="sub">Measured, not claimed.</p>
+
+  <div class="statrow">
+    <div class="stat"><div class="v">138</div><div class="l">automated tests passing</div></div>
+    <div class="stat"><div class="v">100%</div><div class="l">of attack attempts blocked</div></div>
+    <div class="stat"><div class="v">&lt;1s</div><div class="l">typical answer time</div></div>
+    <div class="stat"><div class="v">778k</div><div class="l">payments searched</div></div>
+  </div>
+
+  <p>Fifteen questions with known correct answers are run automatically. The correct
+  answers were worked out independently by hand — if the test used the system's own
+  method to check the system, it would only prove it agrees with itself.</p>
+
+  <table>
+    <tr><th>What is measured</th><th class="n">Result</th><th>What it means</th></tr>
+    <tr><td>Gets the right answer</td><td class="n">15 / 15</td><td>The numbers match the hand-worked answers</td></tr>
+    <tr><td>Gets the right number precisely</td><td class="n">15 / 15</td><td>Within one tenth of one percent</td></tr>
+    <tr><td>Uses only the right data</td><td class="n">15 / 15</td><td>Did not reach the right number via wrong data</td></tr>
+    <tr><td>Splits mix from rate correctly</td><td class="n">correct</td><td>The Chapter 1 problem, solved</td></tr>
+    <tr><td><b>Blocks unsafe requests</b></td><td class="n"><b>10 / 10</b></td><td>No exceptions permitted</td></tr>
+    <tr><td>Handles unclear questions</td><td class="n">5 / 5</td><td>Asks or states its assumption; never guesses silently</td></tr>
+  </table>
+
+  <div class="box">
+    <h4>The measure most people skip</h4>
+    <p>"Uses only the right data" is the one that matters most and is the one usually
+    left out. A query can reach the correct number through the wrong tables, by a
+    coincidence that will not hold next week. Checking <i>which data was touched</i>
+    catches that; checking only the answer does not.</p>
+  </div>
+
+  <h3>It works without any AI service connected</h3>
+  <p>Everything above — every number, every warning, every refusal, the entire scorecard
+  — was produced with <b>no AI service connected at all</b>. The language model makes the
+  writing better and handles genuinely ambiguous questions. It is not required for the
+  answers to be correct, because it never calculates anything.</p>
+  <p>That is a deliberate design property, not a fallback.</p>
+
+  <h3>A model <i>is</i> now connected</h3>
+  <p>It runs on a free AI service, costing nothing. The model was not picked by reading
+  specifications: all thirteen available free models were tested on the two jobs this
+  system actually needs — producing a valid plan, and writing up numbers without
+  mangling them. Most failed. Several could not produce usable output at all; one
+  returned nothing but its own internal monologue. One was correct and quick at both,
+  and that is the one in use.</p>
+
+  <div class="box">
+    <h4>The model is the slow part, and that is fine</h4>
+    <p>A fresh question takes about 11 seconds, of which 11 seconds is the AI writing
+    prose and a tenth of a second is the database. Asking the same thing again takes
+    <b>8 milliseconds</b>. A paid model would bring a fresh question to about 2 seconds
+    for roughly £2 per thousand questions — a two-line change.</p>
+  </div>
+
+  <div class="box warn">
+    <h4>What happens when the free allowance runs out</h4>
+    <p>The free tier allows 50 questions a day. When that is exhausted, the system
+    quietly falls back to writing the answers itself, and <b>the scorecard still scores
+    100%</b>. The prose is plainer; every number, chart, warning and refusal is
+    identical. This was not planned as a demonstration — it happened during testing,
+    and it is the clearest evidence that the AI is genuinely not load-bearing.</p>
+  </div>
+</section>
+
+<!-- ───────────────────────── 10 ───────────────────────── -->
+<section>
+  <h2><span class="num">Chapter 10</span>What it does not do</h2>
+  <p class="sub">Stated plainly, because an unstated limit is a surprise later.</p>
+
+  <ul class="tick cross">
+    <li><b>It does not find causes.</b> It finds what changed and which parts
+      contributed. Why that happened is offered as a hypothesis with a confidence level,
+      never as a fact. "A routing change probably did this" is always labelled as a
+      guess.</li>
+    <li><b>It does not watch the data on its own.</b> It answers questions; it does not
+      raise alarms. The design for that exists and was deliberately cut.</li>
+    <li><b>It does not remember your previous question.</b> Each question stands alone —
+      follow-ups like "and what about cards?" are not supported.</li>
+    <li><b>It is tested on fifteen questions, not hundreds.</b> Reported as fifteen rather
+      than inflated. More would be better.</li>
+    <li><b>Accounts are built in, not connected to a company directory.</b> Suitable for a
+      demonstration; a real deployment would connect to existing company logins.</li>
+    <li><b>The data is invented</b>, even though its behaviour is calibrated to published
+      national figures.</li>
+  </ul>
+
+  <h3>Problems found and fixed during the build</h3>
+  <p>Four faults were found in the earlier reference system this was based on, and
+  several more in this one. Two are worth recording because of how they were found.</p>
+
+  <div class="box warn">
+    <h4>The question that refused itself</h4>
+    <p>An early safety rule blocked anything containing the word "drop" — sensibly meant
+    to catch "drop the table". It also blocked <i>"why did our success rate <b>drop</b>
+    last week"</i>, which is the single most important question this product answers.
+    Found by running the demo, not by reading the code.</p>
+  </div>
+
+  <div class="box warn">
+    <h4>The question it answered instead of yours</h4>
+    <p>Asked <i>"how many times the name priya appeared in transactions last month"</i>,
+    the system matched the word "transactions" to its payment-count measure, matched
+    "last month" to a date range, <b>silently threw away "the name priya"</b>, and
+    reported October's total payment count — marked <b>high confidence</b>.</p>
+    <p>There is no person's name anywhere in this data, so the question was
+    unanswerable. But nothing downstream could tell, because nothing downstream knew
+    anything had been discarded. Answering a different question than the one asked,
+    confidently, is the worst thing a tool like this can do.</p>
+    <p>It now checks that <i>every meaningful word</i> in your question has been
+    accounted for. Anything left over stops it, and it tells you which words it could
+    not place. Tuning that was the delicate part — too strict and it starts refusing
+    questions it can genuinely answer — so it is tested against every known-good
+    question to confirm it never blocks one of those.</p>
+  </div>
+
+  <div class="box warn">
+    <h4>The regional manager who could see everything</h4>
+    <p>Rahul's account should only see the South region. For most questions it did. But
+    for questions that did not happen to involve merchant information, the restriction
+    was silently not applied — and he saw the whole country. The existing test passed
+    because it happened to use a question that <i>did</i> involve merchants.</p>
+    <p>Found by actually signing in as him and comparing his numbers to the CXO's. They
+    were identical when they should not have been. Now fixed, with five tests that
+    specifically use the kind of question that exposed it.</p>
+  </div>
+
+  <p>Both are recorded in the project's written assumptions rather than quietly patched,
+  because how a fault was found says as much as the fix.</p>
+</section>
+
+<!-- ───────────────────────── 11 ───────────────────────── -->
+<section>
+  <h2><span class="num">Chapter 11</span>Using it</h2>
+  <p class="sub">Starting it, and what to try first.</p>
+
+  <h3>Starting it</h3>
+  <p>One command sets everything up — it installs what it needs, builds the data, checks
+  the data is correct, and starts the service so that it restarts automatically if it
+  ever stops:</p>
+  <div class="q">./deploy/local/install.sh</div>
+  <p>Then open <b>http://localhost:8000</b> and sign in. Four demo accounts are offered
+  on the sign-in screen with their password shown.</p>
+
+  <table>
+    <tr><th>To do this</th><th>Use this</th></tr>
+    <tr><td>Check it is running</td><td><code>systemctl --user status paylens</code></td></tr>
+    <tr><td>Watch what it is doing</td><td><code>journalctl --user -u paylens -f</code></td></tr>
+    <tr><td>Stop it</td><td><code>systemctl --user stop paylens</code></td></tr>
+    <tr><td>Run the tests</td><td><code>python -m pytest</code></td></tr>
+    <tr><td>Run the scorecard</td><td><code>python -m eval.run</code></td></tr>
+  </table>
+
+  <h3>The six questions worth trying, in order</h3>
+  <ol class="steps">
+    <li><b>Why did our overall success rate drop last week?</b><br>
+      The main event. Shows the mix-versus-rate split and three supporting charts.</li>
+    <li><b>How many transactions did merchant M-1042 process in October?</b><br>
+      An ordinary question that quietly triggers three different data-quality warnings.</li>
+    <li><b>What's our success rate?</b><br>
+      Incomplete, so it asks you which period you meant.</li>
+    <li><b>Sign in as Kanaka Stores, then ask to compare with merchant M-2201.</b><br>
+      Refused, with an explanation and an alternative.</li>
+    <li><b>Delete all failed transactions.</b><br>
+      Declined — it can only read.</li>
+    <li><b>Show me every single transaction row ever.</b><br>
+      Returns a sample and tells you plainly it is showing 5,000 of 769,853.</li>
+  </ol>
+
+  <div class="shot">
+    <img src="screenshots/10-rails.png" alt="Full interface">
+    <div class="cap">The full screen. Left: ask a question, and what the system knows.
+      Middle: the answer. Right: which data was used, how the measure is defined, and how
+      the whole thing works.</div>
+  </div>
+</section>
+
+<!-- ───────────────────────── 12 ───────────────────────── -->
+<section>
+  <h2><span class="num">Chapter 12</span>In one page</h2>
+  <p class="sub">If you read nothing else.</p>
+
+  <p><b>What it is.</b> A tool that answers questions about payment performance in plain
+  English, and shows its working so completely that you can check it.</p>
+
+  <p><b>What makes it different.</b> It can tell the difference between "this part of the
+  business broke" and "more customers used the part that was always weaker". Most tools
+  cannot, and confidently give the wrong answer — in one of two opposite directions.</p>
+
+  <p><b>Why you can trust it.</b> The AI never calculates a number; ordinary program code
+  does, and the AI only writes the sentences around it. Facts, guesses and recommendations
+  are kept in separate places so a guess cannot be dressed up as a fact. Every answer
+  shows the exact query that produced it.</p>
+
+  <p><b>Why it is safe.</b> It can only read, never write. Your access level comes from
+  your account and is built into the database query itself. Ten attack attempts are
+  tested on every change and all ten are blocked.</p>
+
+  <p><b>How well it works.</b> Fifteen questions with independently hand-worked answers:
+  correct on all fifteen, by all three measures. 138 automated tests.</p>
+
+  <p><b>What it costs.</b> Nothing. It runs on a free AI service, and works correctly 
+  even when that service is unavailable.</p>
+
+  <p><b>What it will not do.</b> It will not tell you <i>why</i> something happened — only
+  what changed and what contributed. It will not watch the data for you. And it will tell
+  you, every time, what it had to assume and what it could not check.</p>
+
+  <div class="box key" style="margin-top:26px">
+    <h4>The one sentence version</h4>
+    <p>PayLens answers "why did our success rate drop?" in under a second, correctly
+    separates a real failure from a shift in customer behaviour, and never asks you to
+    take its word for anything.</p>
+  </div>
+
+  <p style="margin-top:34px;color:#5b6b64;font-size:9pt;border-top:1px solid #dde4e0;
+            padding-top:12px">
+    Further reading in the project folder — <code>README.md</code> for setup and results,
+    <code>SUBMISSION.md</code> for the full technical write-up, <code>ASSUMPTIONS.md</code>
+    for every limitation and every fault found, <code>datasets/CALIBRATION.md</code> for
+    where each data figure came from, and <code>DEPLOY.md</code> for running it elsewhere.
+  </p>
+</section>
+
+</body>
+</html>

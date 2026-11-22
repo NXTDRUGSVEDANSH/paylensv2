@@ -1,0 +1,31 @@
+# AWS App Runner — the least-moving-parts option. Point it at an ECR image.
+#   aws apprunner create-service --cli-input-json file://deploy/apprunner-service.json
+version: 1.0
+runtime: docker
+build:
+  commands:
+    build:
+      - echo "image is prebuilt in ECR; App Runner only runs it"
+run:
+  runtime-version: latest
+  command: sh -c "exec uvicorn paylens2.api.app:app --host 0.0.0.0 --port ${PORT} --workers 1"
+  network:
+    port: 8000
+  env:
+    - name: PORT
+      value: "8000"
+    - name: DUCKDB_PATH
+      value: /app/data/paylens.duckdb
+    - name: CHROMA_PATH
+      value: /app/data/chroma_db
+    - name: MAX_SQL_ROWS
+      value: "5000"
+    - name: SQL_TIMEOUT_S
+      value: "10"
+    # Lock this down before anyone else can reach the service.
+    - name: CORS_ORIGINS
+      value: "https://paylens.example.com"
+  secrets:
+    # Never an env var in plaintext: App Runner resolves this at start.
+    - name: LLM_API_KEY
+      value-from: "arn:aws:secretsmanager:ap-south-1:<ACCOUNT_ID>:secret:paylens/llm-api-key"

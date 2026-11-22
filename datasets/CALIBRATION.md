@@ -105,6 +105,34 @@ And re-measured from the generated rows, not just the constants:
 [PASS] UPI approval rate            actual 88.8722%   expected 88.8800%
 ```
 
+## The one place the journey model departs from the published figure
+
+The failure taxonomy was rebuilt around the ten steps of a payment journey, which
+introduced technical failure modes NPCI does not measure. Resolved explicitly:
+
+NPCI's technical decline covers faults **at the bank or at NPCI** — issuer down,
+issuer timeout, response lost. A logged-out terminal, a faulty card reader, a dead
+SIM or a gateway bug never reaches NPCI's switch, so none of them is in that 0.24%.
+A card-present estate therefore has strictly more technical failure, and quoting
+0.24% as the technical decline of a POS estate would understate it ~5x.
+
+So UPI keeps the NPCI anchors exactly, card-present rails carry the terminal- and
+gateway-side codes inside their own modelled failure budget, and
+`dim_failure_code.npci_td_scope` marks the codes NPCI would actually count.
+
+| | measured | published |
+|---|---|---|
+| UPI business decline | 10.89% | **10.88%** `[NPCI]` |
+| UPI technical decline | 0.247% | **0.24%** `[NPCI]` |
+| UPI approval rate | 88.86% | **88.88%** `[DERIVED]` |
+| Overall technical decline, all rails | 1.47% | not published — `[MODELLED]` |
+| …of which inside NPCI's definition | 0.47pp | — |
+
+`data/verify.py` asserts each line separately, and the `technical_decline_rate`
+metric states in its own `denominator_note` that it is broader than the published
+figure. Every invented weight is listed in
+[`../ASSUMPTIONS.md`](../ASSUMPTIONS.md#1b-the-payment-journey-and-every-invented-share).
+
 ## What is not real, and why
 
 ### Non-UPI success rates — `[MODELLED]`

@@ -1,10 +1,46 @@
+# ── secrets ─────────────────────────────────────────────────────────────────
+# Only .env.example is tracked, and it carries a truncated placeholder key.
+.env
+.env.local
+.env.free
+*.key
+*.pem
+
+# ── runtime state, not source ───────────────────────────────────────────────
+# auth.db holds seeded demo accounts and their bcrypt hashes; it is rebuilt on
+# first boot. The -wal/-shm files are SQLite scratch.
+data/auth.db
+data/auth.db-wal
+data/auth.db-shm
+data/*.duckdb
+data/*.duckdb.wal
+data/.duckdb_tmp/
+data/paylens.duckdb.tmp/
+data/chroma_db/
+logs/
+
+# ── generated outputs ───────────────────────────────────────────────────────
+# Evaluation runs are reproducible from the committed question bank; the raw
+# per-query JSONL of a single run is not source.
+evaluation/results/
+evaluation/datasets/bird_dbs/
+docs/_pg/
+*.tmp
+*.tmp.*
+
+# ── python ──────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 .venv/
-.env
-data/*.duckdb
-data/*.duckdb.wal
-data/chroma_db/
+venv/
 .pytest_cache/
+.ruff_cache/
+
+# ── editors / os ────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
 node_modules/
 .next/

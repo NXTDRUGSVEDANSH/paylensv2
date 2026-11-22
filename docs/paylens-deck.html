@@ -1,0 +1,980 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PayLens</title>
+<style>
+@page { size: 13.333in 7.5in; margin: 0; }
+/* Pine Labs house colours, taken from the product's own stylesheet:
+   Pine Green #003323 and Mint #50D387 are the brand, everything else is paper.
+   The amber stays as the one off-hue, exactly as it was, because the API tier
+   and the reasoning layer need to read as different kinds of thing. */
+:root{
+  --ink:#0d1614; --hdr1:#003323; --hdr2:#3f8f66; --brand:#003323;
+  --ui:#003323; --api:#b07a05; --stage:#0f9960; --model:#8a6a3d; --store:#2f7d57;
+  --cardbg:#f4f8f5; --pillbg:#e9f2ec; --pillbg2:#faf1dd;
+  --pine:#003323; --mint:#50d387; --deep:#0b6b45;
+}
+*{ box-sizing:border-box; margin:0; padding:0; }
+body{ font-family:"Segoe UI Variable Display","Segoe UI",system-ui,
+      "Helvetica Neue",Arial,sans-serif; color:var(--ink); background:#fff;
+      -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+.page{ width:1280px; height:720px; overflow:hidden; position:relative;
+       display:flex; flex-direction:column; page-break-after:always; }
+.page:last-child{ page-break-after:auto; }
+
+header{ height:50px; flex:0 0 50px; display:flex; align-items:center;
+        justify-content:space-between; padding:0 26px 0 30px;
+        background:linear-gradient(100deg,var(--hdr1) 0%,var(--hdr1) 34%,var(--hdr2) 100%); }
+header h1{ font-size:17.5px; font-weight:800; letter-spacing:.055em; color:#fff;
+           text-transform:uppercase; }
+.brand{ font-size:22px; font-weight:900; letter-spacing:-.012em; color:var(--brand);
+        background:#fff; padding:3px 13px; border-radius:5px; }
+.brand em{ font-style:normal; color:#1d7a55; }
+
+main{ flex:1; min-height:0; padding:10px 20px 0; display:flex;
+      flex-direction:column; gap:7px; }
+.layer{ position:relative; border:1.4px dashed #b9b9b9; border-radius:11px;
+        padding:11px 10px 8px; }
+.layer > .label{ position:absolute; top:-8px; left:50%; transform:translateX(-50%);
+  background:#fff; padding:0 12px; font-size:11px; font-weight:700; color:#3a3a3a; }
+/* Cards hug their content. Without this they stretch to the tallest cell in
+   the row, which left every page with a tall bordered box holding a few lines
+   of text at the top and a large empty region beneath. */
+.row{ display:grid; gap:9px; align-items:start; }
+.r2{ grid-template-columns:1fr 1fr; } .r3{ grid-template-columns:repeat(3,1fr); }
+.r4{ grid-template-columns:repeat(4,1fr); }
+.r3a{ grid-template-columns:1.06fr 1fr 1.04fr; }
+.r21{ grid-template-columns:1.25fr 1fr; }
+.grow{ flex:1; }
+
+.card{ border:1.3px solid #cfe0d5; border-radius:10px; background:var(--cardbg);
+       padding:6px; display:flex; flex-direction:column; gap:4px; }
+.card.reason{ border-color:#eccf9a; background:#fdf7ea; }
+.card.plain{ background:#fff; }
+.head{ display:flex; align-items:center; gap:7px; background:var(--ui); color:#fff;
+       border-radius:7px; padding:4px 8px; font-size:11px; font-weight:750; }
+.head.api{ background:var(--api); color:#fff; }
+.head.stage{ background:var(--stage); }
+.head.store{ background:var(--store); color:#fff; }
+.head.reason{ background:#c9971a; color:#2f2206; }
+.head.pine{ background:var(--pine); }
+.pills{ display:grid; gap:3.5px; }
+.p1{ grid-template-columns:1fr; } .p2{ grid-template-columns:1fr 1fr; }
+.pill{ background:var(--pillbg); border:1px solid #d4e4da; border-radius:6px;
+       padding:3.2px 7px; font-size:9.1px; line-height:1.26; font-weight:560;
+       color:#234a3a; text-align:center; display:block; }
+.card.reason .pill{ background:var(--pillbg2); border-color:#eddcb8; color:#5e4312; }
+.pill.wide{ grid-column:1 / -1; }
+.pill.hot{ background:#d9efe3; border-color:#8fcfae; }
+.pill.l{ text-align:left; }
+.mono{ font-family:"Cascadia Mono",Consolas,"Courier New",monospace;
+       font-size:8.8px; letter-spacing:-.015em; }
+
+table{ width:100%; border-collapse:collapse; font-size:9.3px; }
+th,td{ padding:3.4px 7px; text-align:right; border-bottom:1px solid #e0ebe4; }
+th:first-child,td:first-child{ text-align:left; }
+thead th{ font-size:8.6px; font-weight:800; letter-spacing:.035em;
+          text-transform:uppercase; color:#2f6b50; border-bottom:1.4px solid #bcd8c8; }
+tbody tr:last-child td{ border-bottom:none; }
+td.me{ font-weight:800; color:var(--deep); background:#e6f4ec; }
+td.dim{ color:#93a09a; }
+.tbl-note{ font-size:8.4px; color:#8a8a8a; padding-top:4px; line-height:1.35; }
+
+.legend{ display:flex; align-items:center; gap:15px; padding:1px 4px 0;
+         font-size:8.8px; color:#4a4a4a; font-weight:620; }
+.legend span{ display:flex; align-items:center; gap:5px; }
+.dot{ width:9px; height:9px; border-radius:50%; flex:0 0 auto; }
+nav{ flex:0 0 38px; display:grid; grid-template-columns:repeat(6,1fr); gap:8px;
+     padding:4px 20px 7px; align-items:end; }
+.tab{ background:#2f7d57; color:#fff; text-align:center; border-radius:5px;
+      padding:7px 2px; font-size:10.3px; font-weight:800; letter-spacing:.045em; }
+.tab.on{ background:var(--pine); padding:11px 2px; border-radius:7px 7px 5px 5px; }
+.route{ display:flex; align-items:center; gap:6px; font-size:9px; color:#5e4312;
+        font-weight:650; padding:0 2px; }
+.route .dash{ flex:1; border-top:1.6px dashed #c08a3c; height:0; }
+.route .dest{ background:var(--pillbg2); border:1px solid #eddcb8; border-radius:6px;
+              padding:3px 7px; font-weight:750; }
+
+/* title page */
+.cover{ flex:1; display:flex; flex-direction:column; justify-content:center;
+        padding:0 70px; gap:16px; }
+.cover .kicker{ font-size:12px; font-weight:800; letter-spacing:.16em;
+                color:var(--stage); text-transform:uppercase; }
+.cover h2{ font-size:68px; font-weight:900; letter-spacing:-.025em; line-height:.98; }
+.cover h2 em{ font-style:normal; color:var(--stage); }
+.cover .sub{ font-size:19px; font-weight:600; color:#44544d; max-width:900px;
+             line-height:1.35; }
+.thesis{ border-left:4px solid var(--stage); padding:8px 0 8px 15px;
+         font-size:14px; line-height:1.55; font-weight:600; color:#1b2e27;
+         max-width:860px; }
+.chips{ display:flex; gap:10px; flex-wrap:wrap; margin-top:4px; }
+.chip{ background:var(--cardbg); border:1.3px solid #cfe0d5; border-radius:9px;
+       padding:8px 14px; font-size:10.5px; font-weight:650; color:#234a3a; }
+.chip b{ display:block; font-size:19px; font-weight:900; color:var(--pine);
+         letter-spacing:-.02em; }
+.cover .foot{ font-size:10px; color:#8a948f; font-weight:600; }
+/* Pages with room: larger type, same grammar. */
+.loose .pill{ font-size:10.6px; line-height:1.34; padding:4.5px 9px; }
+.loose .mono{ font-size:10px; }
+.loose .head{ font-size:12.4px; padding:5.5px 10px; }
+.loose .pills{ gap:4.5px; }
+.loose .card{ padding:7px; gap:5px; }
+.loose table{ font-size:10.6px; }
+.loose th,.loose td{ padding:4.6px 9px; }
+.loose thead th{ font-size:9.4px; }
+.loose .tbl-note{ font-size:9.6px; line-height:1.42; padding-top:6px; }
+.loose .layer{ padding:14px 12px 11px; }
+.loose .layer > .label{ font-size:12px; }
+.loose .row{ gap:11px; }
+.loose main{ gap:10px; }
+.loose h3.sec{ font-size:12px; }
+.loose .route{ font-size:10.4px; }
+
+h3.sec{ font-size:11px; font-weight:800; letter-spacing:.05em; color:#2f6b50;
+        text-transform:uppercase; padding:1px 2px 2px; }
+.kv{ font-size:9.3px; line-height:1.5; color:#234a3a; }
+.kv b{ color:#b02a30; }
+</style>
+</head>
+<body>
+<section class="page loose">
+<header><h1>Pine Labs · Enterprise AI Business Analyst</h1><div class="brand">PAY<em>LENS</em></div></header>
+<div class="cover">
+  <div class="kicker">Payments analytics, answered in English</div>
+  <h2>Pay<em>Lens</em></h2>
+  <div class="sub">An auditable natural-language business analyst for payments.
+    Ask what happened, why it happened, and what to do about it — and get the
+    working, not just the number.</div>
+  <div class="thesis">A language model writes the SQL. The guard decides whether
+    it runs. Python computes every figure in the answer, so a number you can see
+    is a number that traces back to a query you can read.</div>
+  <div class="chips">
+    <div class="chip"><b>775,957</b>payment attempts, calibrated to NPCI</div>
+    <div class="chip"><b>2</b>model calls per answer</div>
+    <div class="chip"><b>14</b>validation checks before execution</div>
+    <div class="chip"><b>6</b>answer shapes, not one</div>
+    <div class="chip"><b>287</b>tests passing</div>
+  </div>
+  <div class="foot">DuckDB · FastAPI · Chroma · Qwen 2.5 Coder 32B &nbsp;·&nbsp;
+    the model is replaceable; the guarantees are not</div>
+</div>
+<nav><div class="tab">OVERVIEW &amp; DATA</div><div class="tab">DATA QUALITY</div><div class="tab">SEMANTIC MODEL</div><div class="tab">PIPELINE &amp; ARCHITECTURE</div><div class="tab">EVALUATION METRICS</div><div class="tab">GUARD &amp; RBAC</div></nav>
+</section>
+<section class="page loose">
+<header><h1>Overview &amp; the data</h1><div class="brand">PAY<em>LENS</em></div></header>
+<main>
+  <div class="row r21">
+    <section class="layer" >
+      <div class="label">Three questions, three answer shapes</div>
+      <div class="row r3" style="margin-bottom:8px">
+        <div class="card"><div class="head">What happened</div>
+          <div class="pills p1">
+            <div class="pill">A measured number, with its denominator</div>
+            <div class="pill">Breakdown · trend · rank · compare</div>
+            <div class="pill">Every figure cites the evidence that produced it</div>
+          </div></div>
+        <div class="card"><div class="head stage">Why it moved</div>
+          <div class="pills p1">
+            <div class="pill">Mix versus rate, computed in Python</div>
+            <div class="pill"><b>&minus;1.33pp overall · 92.9% of it traffic mix</b></div>
+            <div class="pill">Reported as a failure if the identity does not close</div>
+          </div></div>
+        <div class="card"><div class="head store">What to do</div>
+          <div class="pills p1">
+            <div class="pill">9 playbooks · 29 levers, each with an owner</div>
+            <div class="pill">Advice this system has no basis for is dropped</div>
+            <div class="pill">No industry benchmark is ever stated as fact</div>
+          </div></div>
+      </div>
+      <h3 class="sec">The finding the dataset was built to contain</h3>
+      <table>
+        <thead><tr><th>Rail</th><th>Share before &rarr; after</th>
+          <th>Its own rate before &rarr; after</th></tr></thead>
+        <tbody>
+          <tr><td>UPI</td><td class="me">61.95% &rarr; 54.95%</td><td>88.87% &rarr; 88.79%</td></tr>
+          <tr><td>NETBANKING</td><td class="me">8.01% &rarr; 15.02%</td><td>71.26% &rarr; 71.13%</td></tr>
+          <tr><td>CARD</td><td>22.01% &rarr; 22.01%</td><td>90.15% &rarr; 90.06%</td></tr>
+          <tr><td>WALLET</td><td>5.02% &rarr; 5.01%</td><td>95.14% &rarr; 95.02%</td></tr>
+          <tr><td>EMI</td><td>3.01% &rarr; 3.01%</td><td>84.68% &rarr; 84.54%</td></tr>
+        </tbody>
+      </table>
+      <div class="tbl-note"><b>Nothing broke.</b> Success rate fell 87.93% &rarr; 86.60%
+        while no rail moved its own rate by more than 0.1pp. Traffic moved toward a
+        structurally weaker one. Calling netbanking "the problem" sends the wrong
+        team to fix a routing change — which is the classic error this product
+        exists to prevent.</div>
+    </section>
+
+    <section class="layer" >
+      <div class="label">The dataset</div>
+      <div class="row r2" style="margin-bottom:8px">
+        <div class="card"><div class="head store">Shape</div>
+          <div class="pills p1">
+            <div class="pill"><b>775,957</b> attempts over 6 related tables</div>
+            <div class="pill">2026-07-24 &rarr; 2026-11-20</div>
+            <div class="pill">240 merchants · 5 rails · 4 regions</div>
+            <div class="pill">Deterministic: seed 42, ~40s to regenerate</div>
+          </div></div>
+        <div class="card"><div class="head store">Grounded, not invented</div>
+          <div class="pills p1">
+            <div class="pill">Calibrated to <b>NPCI, September 2026</b></div>
+            <div class="pill">Technical decline 0.24% · business decline 10.88%</div>
+            <div class="pill">Implied approval rate 88.88%</div>
+            <div class="pill">Worst published: Fino 24.26% BD · ICICI 0.73% TD</div>
+          </div></div>
+      </div>
+      <h3 class="sec">Where it deliberately departs</h3>
+      <div class="pills p1">
+        <div class="pill l">Technical decline is set to <b>1.5%</b>, not NPCI's 0.24%.
+          A dataset at the published rate has roughly 1,800 technical declines in
+          four months — too few to decompose, rank or trend, so the product would
+          have nothing to demonstrate on its most interesting path.</div>
+        <div class="pill l">Every modelled share is labelled
+          <span class="mono">[MODELLED]</span> or <span class="mono">[ASSUMED]</span>
+          in <span class="mono">datasets/CALIBRATION.md</span>, with its source.
+          An invented number presented as observed is the defect this whole
+          product is built against.</div>
+      </div>
+    </section>
+  </div>
+
+  <section class="layer">
+    <div class="label">Six related tables, and the arithmetic behind the claim</div>
+    <div class="row" style="grid-template-columns:1.35fr 1fr">
+      <div class="card plain"><div class="head store">The schema</div>
+        <div class="pills p2">
+          <div class="pill l"><span class="mono">fact_transactions</span> — one row per attempt</div>
+          <div class="pill l"><span class="mono">fact_settlements</span> — payout batches</div>
+          <div class="pill l"><span class="mono">dim_merchant</span> — tier, category, risk, region</div>
+          <div class="pill l"><span class="mono">dim_bank</span> — issuer and acquirer, NPCI rates</div>
+          <div class="pill l"><span class="mono">dim_payment_method</span> — rail, network, card type</div>
+          <div class="pill l"><span class="mono">dim_terminal</span> — health, connectivity, estate</div>
+          <div class="pill l wide"><span class="mono">dim_failure_code</span> — category, decline type,
+            owner, journey step, whether it is worth retrying</div>
+        </div></div>
+      <div class="card reason"><div class="head reason">Why a rate moved</div>
+        <div class="pills p1">
+          <div class="pill l"><span class="mono">delta = &Sigma;(w&#8348;&minus;w&#8342;)&middot;v&#8342;</span>
+            &nbsp;&nbsp;<b>mix</b> — traffic moved between segments<br>
+            <span class="mono">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;+ &Sigma; w&#8348;&middot;(v&#8348;&minus;v&#8342;)</span>
+            &nbsp;&nbsp;<b>rate</b> — segments changed their own rate</div>
+          <div class="pill l">Measured here: <b>&minus;1.33pp</b> overall, of which
+            <b>&minus;1.23pp is mix</b> and &minus;0.09pp is rate — 92.9% traffic mix.</div>
+          <div class="pill l hot">The identity is exact, so the residual is the test:
+            <span class="mono">1.7e&minus;15</span>. If it does not close, the weights
+            do not sum to one, and a split that does not balance is reported as a
+            failure rather than as an answer.</div>
+        </div></div>
+    </div>
+  </section>
+</main>
+<nav><div class="tab on">OVERVIEW &amp; DATA</div><div class="tab">DATA QUALITY</div><div class="tab">SEMANTIC MODEL</div><div class="tab">PIPELINE &amp; ARCHITECTURE</div><div class="tab">EVALUATION METRICS</div><div class="tab">GUARD &amp; RBAC</div></nav>
+</section>
+<section class="page loose">
+<header><h1>Data quality — faults planted, then surfaced</h1><div class="brand">PAY<em>LENS</em></div></header>
+<main>
+  <section class="layer">
+    <div class="label">Five faults are planted in the data on purpose</div>
+    <div class="row r3">
+      <div class="card"><div class="head store">Counting hazards</div>
+        <div class="pills p1">
+          <div class="pill l"><b>Duplicate txn_ids</b> — a double-ingest window.
+            Every honest query must de-duplicate or counts inflate silently.</div>
+          <div class="pill l"><b>Negative amounts</b> — refund corrections posted
+            against the original rail. They are included in totals, and said so.</div>
+        </div></div>
+      <div class="card"><div class="head store">Attribution hazards</div>
+        <div class="pills p1">
+          <div class="pill l"><b>2.09% of attempts carry no issuer.</b> An issuer
+            breakdown genuinely will not sum to the overall total.</div>
+          <div class="pill l"><b>Two sources disagree</b> on attempt counts for
+            5 merchants — transactions versus settlements.</div>
+        </div></div>
+      <div class="card"><div class="head store">Window hazards</div>
+        <div class="pills p1">
+          <div class="pill l"><b>The last 2 days are part-ingested.</b> A trend
+            ending inside that window slopes down for a reason that has nothing
+            to do with payments.</div>
+          <div class="pill l">An earlier design trimmed the window and re-planned.
+            PayLens reports it and leaves the query alone.</div>
+        </div></div>
+    </div>
+  </section>
+
+  <section class="layer">
+    <div class="label">Five probes run against the window every answer actually used</div>
+    <div class="row r2">
+      <div style="display:flex;flex-direction:column;gap:7px">
+        <table>
+          <thead><tr><th>Check</th><th>What it finds on this dataset</th></tr></thead>
+          <tbody>
+            <tr><td><span class="mono">duplicate_txn_ids</span></td>
+                <td style="text-align:left">verifies the view's de-duplication held</td></tr>
+            <tr><td><span class="mono">null_issuer</span></td>
+                <td style="text-align:left">2.09% — issuer rows will not sum</td></tr>
+            <tr><td><span class="mono">partial_days</span></td>
+                <td style="text-align:left">last 2 days under-ingested; reported, never trimmed</td></tr>
+            <tr><td><span class="mono">negative_amount</span></td>
+                <td style="text-align:left">refund corrections on the original rail</td></tr>
+            <tr><td><span class="mono">settlement_mismatch</span></td>
+                <td style="text-align:left">5 merchants where the two sources disagree</td></tr>
+          </tbody>
+        </table>
+        <div class="tbl-note">Thresholds and wording live in
+          <span class="mono">views.yaml</span>, next to the model, so the trip point
+          and the sentence a reader sees are reviewed together.</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:7px">
+        <div class="card plain"><div class="head stage">Three rules these probes follow</div>
+          <div class="pills p1">
+            <div class="pill l"><b>Findings reach the reader, not just a tab.</b>
+              A failing probe is appended to the answer's caveats and deduplicated
+              against what the prose already said — a warning nobody surfaces was
+              not issued.</div>
+            <div class="pill l"><b>Every probe is a guarded query with the caller's
+              own principal.</b> A background query is the easiest place to leak
+              rows a role may not see, because it is not user-initiated and so
+              never looks like the thing to check.</div>
+            <div class="pill l"><b>The duplicate check verifies the guarantee, not
+              the raw table.</b> the allowlist blocks <span class="mono">fact_*</span>
+              and that is not relaxed for a probe, so the check asserts no
+              <span class="mono">txn_id</span> survives twice into the view —
+              which fails loudly if de-duplication ever breaks.</div>
+          </div></div>
+        <div class="card plain"><div class="head store">When two sources disagree</div>
+          <div class="pills p1">
+            <div class="pill l">The answer states the documented precedence
+              (transactions are the system of record) and quantifies the gap.
+              <b>It never averages them and never quietly serves the larger:</b>
+              a reader handed one number is entitled to know the other existed.</div>
+          </div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="layer">
+    <div class="label">What the reader actually sees when a probe fires</div>
+    <div class="row r3">
+      <div class="pill l hot">"<b>2.09% of attempts in this window have no issuer_bank
+        recorded.</b> They are excluded from any issuer breakdown but counted in the
+        overall total, so the segment rows will not sum to the total."</div>
+      <div class="pill l hot">"<b>The last 2 day(s) of this window are only partially
+        ingested</b> (41% of a typical day). Volume is understated and a downward
+        trend at the right-hand edge may not be real."</div>
+      <div class="pill l hot">"<b>Transactions and settlements disagree on attempt
+        counts for 5 merchant(s)</b> in this window, worst M-1187 at 6.4%. Counted
+        from v_attempts, which is the system of record."</div>
+    </div>
+    <div class="tbl-note" style="text-align:center">These sentences are templates in
+      <span class="mono">views.yaml</span>, filled from the probe's own result — not
+      prose the model was asked to write. A caveat the model composes is a caveat it
+      can forget.</div>
+  </section>
+</main>
+<nav><div class="tab">OVERVIEW &amp; DATA</div><div class="tab on">DATA QUALITY</div><div class="tab">SEMANTIC MODEL</div><div class="tab">PIPELINE &amp; ARCHITECTURE</div><div class="tab">EVALUATION METRICS</div><div class="tab">GUARD &amp; RBAC</div></nav>
+</section>
+<section class="page loose">
+<header><h1>Semantic model, the guard, and access control</h1><div class="brand">PAY<em>LENS</em></div></header>
+<main>
+  <section class="layer">
+    <div class="label">The view layer — what the model is allowed to see</div>
+    <div class="row r3a">
+      <div class="card"><div class="head store">v_attempts</div>
+        <div class="pills p1">
+          <div class="pill l">One row per attempt, <b>already de-duplicated</b>
+            (<span class="mono">QUALIFY row_number() … = 1</span>) and
+            <b>already joined</b> to all five dimensions.</div>
+          <div class="pill l">Joins disappear from the prompt, which removes the
+            second largest class of text-to-SQL error — and the model cannot
+            forget a de-duplication rule it never knew existed.</div>
+        </div></div>
+      <div class="card"><div class="head store">Indicator columns</div>
+        <div class="pills p1">
+          <div class="pill l"><span class="mono">is_success · is_failed · is_pending</span></div>
+          <div class="pill l"><span class="mono">is_resolved</span> = SUCCESS or FAILED.
+            <b>PENDING is excluded deliberately</b> — an attempt that has not
+            resolved is not a failure, and counting it as one understates the rate.</div>
+          <div class="pill l"><span class="mono">is_business_decline · is_technical_decline</span>
+            — the customer's fault versus ours</div>
+        </div></div>
+      <div class="card"><div class="head api">Declared once, enforced everywhere</div>
+        <div class="pills p2">
+          <div class="pill"><b>10</b> metrics<br>4 of them ratios</div>
+          <div class="pill"><b>26</b> dimensions<br>14 decomposable</div>
+          <div class="pill"><b>7</b> intents</div>
+          <div class="pill"><b>4</b> roles</div>
+          <div class="pill wide l">Format, synonyms, null labels and the canonical
+            formula all live in <span class="mono">views.yaml</span> — so the prose
+            speaks percent and rupees without the model doing arithmetic.</div>
+        </div></div>
+    </div>
+  </section>
+
+  <section class="layer">
+    <div class="label">Fourteen checks stand between the model and the database</div>
+    <div class="row r3a">
+      <div class="card"><div class="head stage">Check 10 — the backstop</div>
+        <div class="pills p1">
+          <div class="pill l"><b>10a</b> views only — raw tables rejected</div>
+          <div class="pill l"><b>10b</b> it parses</div>
+          <div class="pill l"><b>10c</b> no <span class="mono">SELECT *</span> on a wide view</div>
+          <div class="pill l hot"><b>10d</b> a column aliased with a metric id must use
+            the official expression. <span class="mono">successes / count(*)</span>
+            is plausible, readable, and silently a different number.</div>
+          <div class="pill l"><b>10e</b> no rate grouped by a failure-only column.
+            A real answer once read <i>"the 'customer' failure owner has a 0% success
+            rate on 19,784 attempts"</i> — correct arithmetic, nonsense sentence,
+            and it reads as a finding.</div>
+        </div></div>
+
+      <div class="card"><div class="head stage">The nine guard checks</div>
+        <div class="pills p1">
+          <div class="pill l">1 single statement · 2 SELECT only · 3 no injection</div>
+          <div class="pill l">4 table allowlist · 5 column allowlist + masking</div>
+          <div class="pill l">6 <b>RBAC predicate injection</b> · 7 row cap sentinel</div>
+          <div class="pill l">8 cost estimate · 9 <b>re-walk: the predicate survived</b></div>
+          <div class="pill l hot">All checks work on the AST, never the SQL string.
+            A <span class="mono">DROP</span> substring test misses
+            <span class="mono">/*x*/DROP</span>.</div>
+          <div class="pill l"><b>The guard does not care who wrote the SQL.</b>
+            Model-authored queries pass the same checks compiled ones did.</div>
+        </div></div>
+
+      <div class="card reason"><div class="head reason">The hole this design had to close</div>
+        <div class="pills p1">
+          <div class="pill l"><span class="mono">assert_injected</span> skips tables a
+            query does not name:<br>
+            <span class="mono">if not targets: continue &nbsp;# vacuously passes</span></div>
+          <div class="pill l">The classic model anchors every role scope on
+            <span class="mono">fact_transactions</span>. A PayLens query reads
+            <span class="mono">v_attempts</span>, names no
+            <span class="mono">fact_transactions</span>, and would therefore get
+            <b>no row filter while check 9 passed anyway</b> — a merchant reading
+            every merchant's rows.</div>
+          <div class="pill l"><b>Fix:</b> PayLens declares
+            <span class="mono">anchor_table: v_attempts</span>.
+            <span class="mono">guard()</span> is parameterised by the model it is
+            handed, so enforcement is the same code pointed at a different target —
+            not a second copy that could drift.</div>
+          <div class="pill l hot">A test asserts the hole <b>exists</b> under the
+            classic model and is <b>closed</b> under PayLens's, so nobody can
+            simplify it back onto the classic model without a test going red.</div>
+        </div></div>
+    </div>
+  </section>
+
+  <section class="layer">
+    <div class="label">Four principals — the role shapes the rows, not just the tone</div>
+    <div class="row" style="grid-template-columns:1.5fr 1fr">
+      <table>
+        <thead><tr><th>Role</th><th>Required claim</th><th>Rows it may read</th>
+          <th>Also</th></tr></thead>
+        <tbody>
+          <tr><td>CXO</td><td class="dim">none</td><td>every row</td><td class="dim">—</td></tr>
+          <tr><td>Analyst</td><td class="dim">none</td><td>every row</td>
+              <td><span class="mono">terminal_id</span> masked</td></tr>
+          <tr><td>Regional manager</td><td><span class="mono">region</span></td>
+              <td class="me">its region only</td>
+              <td><span class="mono">settled_amount</span> denied</td></tr>
+          <tr><td>Merchant user</td><td><span class="mono">merchant_id</span></td>
+              <td class="me">one merchant only</td>
+              <td><span class="mono">merchant_name</span>, <span class="mono">terminal_id</span> masked</td></tr>
+        </tbody>
+      </table>
+      <div class="card plain"><div class="head pine">Three properties worth stating</div>
+        <div class="pills p1">
+          <div class="pill l"><b>A missing claim refuses.</b> An unscoped query is
+            never the fallback when a claim is absent.</div>
+          <div class="pill l"><b>The filter is injected after the model writes.</b>
+            The prompt tells it not to add an access-control filter of its own —
+            a filter the question asks for is the model's to write, a filter the
+            viewer's permissions require is not.</div>
+          <div class="pill l"><b>Measured, not asserted.</b> The evaluation strips
+            the predicate from each scoped query and neutralises it with
+            <span class="mono">OR 1 = 1</span>; check 9 must refuse both.</div>
+        </div></div>
+    </div>
+  </section>
+</main>
+<nav><div class="tab">OVERVIEW &amp; DATA</div><div class="tab">DATA QUALITY</div><div class="tab on">SEMANTIC MODEL</div><div class="tab">PIPELINE &amp; ARCHITECTURE</div><div class="tab">EVALUATION METRICS</div><div class="tab">GUARD &amp; RBAC</div></nav>
+</section>
+<section class="page">
+
+<header>
+  <h1>Overall Architecture</h1>
+  <div class="brand">PAY<em>LENS</em></div>
+</header>
+
+<main>
+
+  <!-- ── frontend ──────────────────────────────────────────────────── -->
+  <section class="layer">
+    <div class="label">Frontend experience layer</div>
+    <div class="row r4">
+
+      <div class="card">
+        <div class="head">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="2.5" width="13" height="9.5" rx="2" stroke="#fff" stroke-width="1.5"/><path d="M4.5 14.2h7" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>
+          Chat surface
+        </div>
+        <div class="pills p2">
+          <div class="pill">Pine sidebar</div>
+          <div class="pill">5 threads, browser-held</div>
+          <div class="pill">Question pinned on submit</div>
+          <div class="pill">720px answer column</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="3" width="13" height="10" rx="1.6" stroke="#fff" stroke-width="1.5"/><path d="M1.5 6.3h13M6 6.3V13" stroke="#fff" stroke-width="1.3"/></svg>
+          Answer tabs
+        </div>
+        <div class="pills p2">
+          <div class="pill">Result + chart</div>
+          <div class="pill">SQL authored &amp; executed</div>
+          <div class="pill">Evidence pack E1…En</div>
+          <div class="pill">Trace + recoveries</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2 11.5 5.6 7l2.7 2.6L13.8 4" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="13.8" cy="4" r="1.5" fill="#fff"/></svg>
+          Measured progress
+        </div>
+        <div class="pills p1">
+          <div class="pill">SSE: the pipeline's own stage events</div>
+          <div class="pill">Self-repairs surfaced, not hidden</div>
+          <div class="pill">No fixed-timer animation</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="5.4" r="2.9" stroke="#fff" stroke-width="1.5"/><path d="M2.6 13.6c.7-2.7 2.8-4 5.4-4s4.7 1.3 5.4 4" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>
+          Identity
+        </div>
+        <div class="pills p2">
+          <div class="pill wide">Sign-in optional — it is a setting, not a gate</div>
+          <div class="pill">4 demo principals</div>
+          <div class="pill">Row filter visible in SQL</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── API ───────────────────────────────────────────────────────── -->
+  <section class="layer">
+    <div class="label">FastAPI orchestration layer &nbsp;·&nbsp; port 8001</div>
+    <div class="row r4">
+
+      <div class="card">
+        <div class="head api">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2.5 4h11M2.5 8h11M2.5 12h7" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/></svg>
+          Ask APIs
+        </div>
+        <div class="pills p1">
+          <div class="pill"><span class="mono">POST /v2/ask</span></div>
+          <div class="pill"><span class="mono">POST /v2/ask/stream</span> — SSE</div>
+          <div class="pill">Role from the session, never the body</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head api">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.2" stroke="#fff" stroke-width="1.5"/><path d="M8 4.8v4.4M8 11.3v.1" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/></svg>
+          Introspection
+        </div>
+        <div class="pills p1">
+          <div class="pill"><span class="mono">GET /v2/health</span></div>
+          <div class="pill"><span class="mono">GET /v2/schema</span> — the exact card</div>
+          <div class="pill"><span class="mono">GET /v2/catalogue</span> — 19 entries</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head api">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="3" y="7" width="10" height="6.5" rx="1.5" stroke="#fff" stroke-width="1.5"/><path d="M5.4 7V5a2.6 2.6 0 0 1 5.2 0v2" stroke="#fff" stroke-width="1.5"/></svg>
+          Auth &amp; principal
+        </div>
+        <div class="pills p1">
+          <div class="pill">Session → verified claims</div>
+          <div class="pill">claims → RBAC principal</div>
+          <div class="pill">A missing claim refuses, never widens</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head api">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M6.4 9.6 9.6 6.4M5.2 7.2 3.6 8.8a2.6 2.6 0 0 0 3.6 3.6l1.6-1.6M10.8 8.8l1.6-1.6a2.6 2.6 0 0 0-3.6-3.6L7.2 5.2" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>
+          Static UI
+        </div>
+        <div class="pills p1">
+          <div class="pill">Own process, own port</div>
+          <div class="pill">Mounted last — <span class="mono">/</span> would shadow the API</div>
+          <div class="pill">charts.js — 797 lines of SVG, no libraries</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── engines ───────────────────────────────────────────────────── -->
+  <section class="layer">
+    <div class="label">GenAI engines &nbsp;·&nbsp; the seven-step pipeline</div>
+    <div class="row r4">
+
+      <div class="card">
+        <div class="head stage">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3 13 12.3 3.7a1.7 1.7 0 0 1 2.4 2.4L5.4 15.4 2 16l.6-3Z" transform="translate(-.6 -1.3)" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg>
+          1 · Author &nbsp;<span style="opacity:.8">LLM</span>
+        </div>
+        <div class="pills p1">
+          <div class="pill"><b>Six actions:</b> sql · advise · explain<br>decompose · clarify · refuse</div>
+          <div class="pill">Schema card + few-shots + catalogue</div>
+          <div class="pill">Periods pre-resolved to literal dates</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head stage">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 1.6 13.4 4v4c0 3.3-2.3 5.6-5.4 6.4C4.9 13.6 2.6 11.3 2.6 8V4L8 1.6Z" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/><path d="M5.8 8.1 7.4 9.7l3-3.2" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          2 · Validate &amp; guard
+        </div>
+        <div class="pills p1">
+          <div class="pill"><b>Check 10</b> — views only · no <span class="mono">SELECT *</span><br>metric formulas verbatim</div>
+          <div class="pill"><b>Nine AST checks</b>, unmodified</div>
+          <div class="pill">RBAC injected, then re-walked</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head stage">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2.4 13.4V7.2M6.8 13.4V3.4M11.2 13.4V9.2" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><path d="M14.2 13.4h-12" stroke="#fff" stroke-width="1.4" stroke-linecap="round"/></svg>
+          3 · Measure &nbsp;<span style="opacity:.8">no LLM</span>
+        </div>
+        <div class="pills p1">
+          <div class="pill">Execute read-only · timeout · row cap</div>
+          <div class="pill"><b>Python computes every number</b><br>→ numbered fact pack E1…En</div>
+          <div class="pill">Mix-vs-rate split · 5 quality probes</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head stage">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="2.4" y="2.4" width="11.2" height="11.2" rx="2" stroke="#fff" stroke-width="1.4"/><path d="M5 6.2h6M5 8.6h6M5 11h3.6" stroke="#fff" stroke-width="1.3" stroke-linecap="round"/></svg>
+          4 · Synthesise &nbsp;<span style="opacity:.8">LLM</span>
+        </div>
+        <div class="pills p1">
+          <div class="pill">Prose from the fact pack only</div>
+          <div class="pill"><b>verify()</b> — a number not measured<br>discards the whole composition</div>
+          <div class="pill">One repair, then the measured answer</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ── data & reasoning ──────────────────────────────────────────── -->
+  <section class="layer" style="border-style:none; padding:3px 0 0;">
+    <div class="row r3">
+
+      <div class="card store">
+        <div class="head store">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><ellipse cx="8" cy="4" rx="5.4" ry="2.2" stroke="#fff" stroke-width="1.4"/><path d="M2.6 4v8c0 1.2 2.4 2.2 5.4 2.2s5.4-1 5.4-2.2V4" stroke="#fff" stroke-width="1.4"/><path d="M2.6 8c0 1.2 2.4 2.2 5.4 2.2s5.4-1 5.4-2.2" stroke="#fff" stroke-width="1.2"/></svg>
+          Guarded warehouse
+        </div>
+        <div class="pills p2">
+          <div class="pill wide"><b>DuckDB, opened read-only</b> — 775,957 attempts</div>
+          <div class="pill"><b>v_attempts</b><br>de-duplicated, pre-joined</div>
+          <div class="pill"><b>v_settlements</b><br>payout batches</div>
+          <div class="pill wide">Indicator columns carry the official metric semantics —
+            <span class="mono">is_success</span>, <span class="mono">is_resolved</span>, <span class="mono">is_technical_decline</span></div>
+          <div class="pill wide">The de-duplication lives inside the view, so a query
+            cannot forget a rule it never knew existed</div>
+          <div class="pill wide" style="background:#d9efe3;border-color:#8fcfae;">
+            Raw <span class="mono">fact_*</span> / <span class="mono">dim_*</span> are absent from the allowlist — the model cannot reach them
+          </div>
+        </div>
+      </div>
+
+      <div class="card store">
+        <div class="head store">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 1.8 14 5v6l-6 3.2L2 11V5l6-3.2Z" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/><path d="M2 5l6 3.2L14 5M8 8.2v6" stroke="#fff" stroke-width="1.2"/></svg>
+          Memory &amp; caches
+        </div>
+        <div class="pills p1">
+          <div class="pill"><b>Chroma few-shots</b> — stamped, so a stale<br>example cannot reverse a fix</div>
+          <div class="pill"><b>paylens_knowledge</b> — metric · glossary · industry<br>a second collection, never the few-shot corpus</div>
+          <div class="pill"><b>NLQ→SQL cache</b> — L0 LRU + L1 Chroma<br>keyed on the <i>resolved</i> window</div>
+          <div class="pill" style="background:#d9efe3;border-color:#8fcfae;">
+            The query is cached. <b>The answer never is.</b>
+          </div>
+        </div>
+      </div>
+
+      <div class="card reason">
+        <div class="head reason">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 2.2a4.4 4.4 0 0 0-2.6 7.9v1.7h5.2V10.1A4.4 4.4 0 0 0 8 2.2Z" stroke="#2f2206" stroke-width="1.4" stroke-linejoin="round"/><path d="M6.2 13.4h3.6" stroke="#2f2206" stroke-width="1.5" stroke-linecap="round"/></svg>
+          Shared reasoning layer
+        </div>
+        <div class="route"><span>Author path</span><span class="dash"></span><span class="dest">Qwen 2.5 Coder 32B</span></div>
+        <div class="route"><span>Synthesis path</span><span class="dash"></span><span class="dest">Qwen 2.5 Coder 32B</span></div>
+        <div class="pills p1">
+          <div class="pill">Semantic model anchored on <span class="mono">v_attempts</span><br>— the same guard code, a different target</div>
+          <div class="pill">Personas shape the prose; predicates shape the rows</div>
+          <div class="pill" style="background:#f7edd6;border-color:#e2c893;">
+            <b>No calculator tool.</b> A number from a tool call has<br>no provenance to show beside the answer.
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <div class="legend">
+    <span><i class="dot" style="background:var(--ui)"></i>UI</span>
+    <span><i class="dot" style="background:var(--api)"></i>API</span>
+    <span><i class="dot" style="background:var(--stage)"></i>core pipeline stage</span>
+    <span><i class="dot" style="background:var(--model)"></i>model, persona, or reasoning layer</span>
+    <span><i class="dot" style="background:var(--store)"></i>data store, cache, or persisted memory</span>
+    <span style="margin-left:auto;color:#8a8a8a;font-weight:600;">
+      Two model calls · nine guard checks · every figure computed in Python
+    </span>
+  </div>
+
+</main>
+
+<nav>
+  <div class="tab">OVERVIEW &amp; DATA</div>
+  <div class="tab">DATA QUALITY</div>
+  <div class="tab">SEMANTIC MODEL</div>
+  <div class="tab on">PIPELINE &amp; ARCHITECTURE</div>
+  <div class="tab">EVALUATION METRICS</div>
+  <div class="tab">GUARD &amp; RBAC</div>
+</nav>
+
+</section>
+<section class="page loose">
+<header><h1>Evaluation — 400 questions, measured</h1><div class="brand">PAY<em>LENS</em></div></header>
+<main>
+  <div class="row r21">
+
+    <section class="layer" style="display:flex;flex-direction:column;gap:7px">
+      <div class="label">Track 2A — operational, against prior art</div>
+      <table>
+        <thead><tr><th>Metric</th><th>PayLens</th><th>Naive baseline</th>
+          <th>Prior art</th><th>Its baseline</th></tr></thead>
+        <tbody>
+          <tr><td>Execution success rate</td><td class="me">95.7%</td>
+              <td>83.1%</td><td class="dim">96.0%</td>
+              <td class="dim">75.0%</td></tr>
+          <tr><td>Healing efficiency</td><td class="me">65.8%</td>
+              <td>0.0%</td>
+              <td class="dim">60.0%</td><td class="dim">—</td></tr>
+          <tr><td>P50 latency</td><td class="me">14,566 ms</td>
+              <td>3,481 ms</td><td class="dim">5,544 ms</td>
+              <td class="dim">2,699 ms</td></tr>
+          <tr><td>P95 latency</td><td class="me">32,596 ms</td>
+              <td>8,116 ms</td><td class="dim">24,987 ms</td>
+              <td class="dim">9,172 ms</td></tr>
+          <tr><td>VES-static</td><td class="me">99.8%</td>
+              <td>70.0%</td><td class="dim">84.0%</td>
+              <td class="dim">79.0%</td></tr>
+          <tr><td>EX on the gold subset</td>
+              <td class="me">100.0%</td>
+              <td>—</td><td class="dim">90.0%</td><td class="dim">64.0%</td></tr>
+        </tbody>
+      </table>
+      <div class="tbl-note">Measurement complete — 400 of 400 questions. <b>The judge pass is still running</b> — 211 of PayLens's runnable answers judged and 134 of the baseline's, so Track 2B will move. 95% of wall clock is provider time, so the
+        latency gap is the model's, not the architecture's. <b>EX is scored only
+        on references whose definition PayLens shares</b>:
+        <span class="mono">avg_ticket</span> differs between the two semantic
+        models.</div>
+
+      <h3 class="sec">Track 2B — LLM judge (G-Eval), judged on runnable queries only</h3>
+      <table>
+        <thead><tr><th>Criterion</th><th>Wt</th><th>PayLens</th>
+          <th>Baseline</th><th>Prior art</th></tr></thead>
+        <tbody>
+          <tr><td>Temporal precision</td><td>.30</td>
+              <td class="me">81.3</td>
+              <td>75.8</td><td class="dim">79.2</td></tr>
+          <tr><td>Schema alignment</td><td>.25</td>
+              <td class="me">87.9</td>
+              <td>81.7</td><td class="dim">86.0</td></tr>
+          <tr><td>Faithfulness</td><td>.30</td>
+              <td class="me">82.1</td>
+              <td>80.2</td><td class="dim">77.8</td></tr>
+          <tr><td>Completeness</td><td>.15</td>
+              <td class="me">76.6</td>
+              <td>84.4</td><td class="dim">77.4</td></tr>
+          <tr><td><b>Composite</b></td><td></td>
+              <td class="me">82.5</td>
+              <td>79.9</td><td class="dim">69.6 *</td></tr>
+        </tbody>
+      </table>
+      <div class="tbl-note">Judge <span class="mono">baidu/ernie-5.5-flash-preview:free</span>, deliberately
+        <b>not</b> the author model — self-judging shares the blind spots that
+        produced the answer. * The prior-art composite does not reconcile with
+        its own criteria (= <b>80.2</b>, not 69.6); its baseline row does.</div>
+
+      <h3 class="sec">What the baseline is</h3>
+      <div class="pills p2">
+        <div class="pill l"><b>Two model calls and nothing else.</b> Call 1 writes
+          SQL from the raw <span class="mono">fact_*</span> /
+          <span class="mono">dim_*</span> DDL; call 2 narrates the rows it got
+          back. Same model, same temperature, same questions.</div>
+        <div class="pill l"><b>No retrieval, no healing, no guard.</b> No Chroma,
+          no few-shots, no view layer, no check 10, no nine checks, no RBAC
+          injection, no profiler, no grounding check.</div>
+        <div class="pill l wide">Same 400 questions: <b>400 SQL calls, 217
+          narration calls</b> — the other 183 produced no rows to narrate. Not a
+          straw man: it is the shape most text-to-SQL systems ship in, and the
+          same baseline the prior-art report used. <b>The gap between the two
+          columns is the price of the architecture, in the same units.</b></div>
+      </div>
+    </section>
+
+    <section class="layer" style="display:flex;flex-direction:column;gap:7px">
+      <div class="label">What the reference harness could not measure</div>
+      <table>
+        <thead><tr><th>Metric</th><th>PayLens</th><th>What it catches</th></tr></thead>
+        <tbody>
+          <tr><td>Action routing</td><td class="me">90.5%</td>
+              <td style="text-align:left">answering a definition with a number</td></tr>
+          <tr><td>Metric-formula fidelity</td><td class="me">100.0%</td>
+              <td style="text-align:left">the PENDING-in-denominator divergence</td></tr>
+          <tr><td>Schema precision</td><td class="me">100.0%</td>
+              <td style="text-align:left">reaching past the views</td></tr>
+          <tr><td>RBAC enforcement</td><td class="me">95.2%</td>
+              <td style="text-align:left">a scoped query with no row filter</td></tr>
+          <tr><td>RBAC leak resistance</td><td class="me">100.0%</td>
+              <td style="text-align:left">filter deleted <i>and</i> neutralised — both refused</td></tr>
+          <tr><td>Grounding rate</td><td class="me">85.9%</td>
+              <td style="text-align:left">numbers in prose that were never measured</td></tr>
+          <tr><td>Ungrounded numbers</td><td class="me">4.64%</td>
+              <td style="text-align:left">per figure, not per answer — lower is better</td></tr>
+          <tr><td>False refusals</td><td class="me">1.10%</td>
+              <td style="text-align:left">claiming the data lacks what it holds</td></tr>
+          <tr><td>Config failures</td><td class="me">0.00%</td>
+              <td style="text-align:left">must be zero or the run is invalid</td></tr>
+        </tbody>
+      </table>
+      <div class="card plain" style="margin-top:2px"><div class="head stage">How the bank was built</div>
+        <div class="pills p2">
+          <div class="pill"><b>400</b> questions<br>15 buckets</div>
+          <div class="pill"><b>60</b> carry gold SQL</div>
+          <div class="pill wide l">Statistical · maths-derived · advisory ·
+            definitional · causal · ambiguous · out-of-scope · adversarial ·
+            RBAC-scoped · multi-turn</div>
+          <div class="pill wide l"><b>240 are generated and self-labelling</b> — the
+            metric × dimension × period coordinates the question was built from
+            <i>are</i> its expected labels, so they carry no annotation risk.</div>
+          <div class="pill wide l">The evaluation date is pinned to 2026-11-20 and the
+            cache is off. Unpinned, "last week" resolves past the data; cached, the
+            author call drops from ~11,700ms to ~15ms and the latency table becomes
+            two distributions reported as one.</div>
+        </div></div>
+    </section>
+  </div>
+</main>
+<nav><div class="tab">OVERVIEW &amp; DATA</div><div class="tab">DATA QUALITY</div><div class="tab">SEMANTIC MODEL</div><div class="tab">PIPELINE &amp; ARCHITECTURE</div><div class="tab on">EVALUATION METRICS</div><div class="tab">GUARD &amp; RBAC</div></nav>
+</section>
+<section class="page loose">
+<header><h1>What a reader actually gets</h1><div class="brand">PAY<em>LENS</em></div></header>
+<main>
+  <section class="layer">
+    <div class="label">Every answer carries its own working</div>
+    <div class="row r4">
+      <div class="card"><div class="head">Result</div>
+        <div class="pills p1">
+          <div class="pill">A headline a business reader can act on</div>
+          <div class="pill">A chart the result chose, not the model</div>
+          <div class="pill">Ratios as <span class="mono">86.60%</span>, money as
+            <span class="mono">INR 1,234,567</span></div>
+        </div></div>
+      <div class="card"><div class="head">Evidence</div>
+        <div class="pills p1">
+          <div class="pill">The numbered fact pack E1…En</div>
+          <div class="pill">Every figure in the prose cites one</div>
+          <div class="pill">A number not in the pack is rejected</div>
+        </div></div>
+      <div class="card"><div class="head">SQL</div>
+        <div class="pills p1">
+          <div class="pill">As authored, and as executed</div>
+          <div class="pill">The injected row filter is visible</div>
+          <div class="pill">Mechanical repairs are listed, not hidden</div>
+        </div></div>
+      <div class="card"><div class="head">Trace</div>
+        <div class="pills p1">
+          <div class="pill">Which checks passed, measured stage timings</div>
+          <div class="pill">Self-repairs: malformed JSON, a rejected composition</div>
+          <div class="pill">Silently rewriting a query is its own defect</div>
+        </div></div>
+    </div>
+  </section>
+
+  <section class="layer">
+    <div class="label">Failing honestly — four rungs, and only the last may blame the data</div>
+    <div class="row r21">
+      <div style="display:flex;flex-direction:column;gap:7px">
+        <table>
+          <thead><tr><th>Rung</th><th>When</th><th style="text-align:left">What the user sees</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>it worked</td><td style="text-align:left">the answer</td></tr>
+            <tr><td>2</td><td>some evidence failed</td>
+                <td style="text-align:left">the answer from the rest, saying how many did not run</td></tr>
+            <tr><td>3</td><td>nothing ran</td>
+                <td style="text-align:left"><b>"a failure on my side"</b> — plus questions that do work</td></tr>
+            <tr><td>4</td><td>the concept is absent</td>
+                <td style="text-align:left">"this dataset does not hold chargebacks", with the nearest field</td></tr>
+          </tbody>
+        </table>
+        <div class="tbl-note">This exists because of a real incident: two questions
+          came back <i>"NOT ANSWERABLE FROM THIS DATA"</i> when nothing was missing —
+          the model had written <span class="mono">:DOUBLE</span> with one colon. The
+          answer told the user something false about their own data, and printed
+          sqlglot's error, ANSI escape codes and all, as the response.</div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:7px">
+        <div class="card plain"><div class="head pine">Four principles, stated as constraints</div>
+          <div class="pills p1">
+            <div class="pill l"><b>Python computes, the model picks.</b> There is no
+              calculator tool, because a number from a tool call has no provenance
+              to show beside the answer.</div>
+            <div class="pill l"><b>The query is cached; the answer never is.</b> A
+              stored answer is a number that was true once, with no way to show a
+              reader which of those two it is.</div>
+            <div class="pill l"><b>Advice is verified the way numbers are.</b>
+              "You should enable network tokenisation" contains no figure, so the
+              grounding check waves it through — a second check drops any
+              recommendation with no playbook behind it, and therefore no owner.</div>
+            <div class="pill l"><b>Never an industry benchmark as fact.</b> Asked
+              "is 86% good", the honest answer is that no benchmark is held here,
+              and then a comparison against this estate's own best segment.</div>
+          </div></div>
+        <div class="card plain"><div class="head stage">Known limits, stated first</div>
+          <div class="pills p1">
+            <div class="pill l">PayLens needs a language model to author; with no key it
+              refuses rather than guessing. Definitions and the decomposition have
+              offline templates, so those two degrade rather than fail.</div>
+            <div class="pill l">Conversation state lives in the browser — clearing
+              site data loses the threads, and they do not follow you to another
+              device.</div>
+            <div class="pill l">Advisory coverage is exactly as wide as
+              <span class="mono">playbooks.yaml</span> and no wider. A question no
+              playbook covers degrades to a measurement rather than inventing counsel.</div>
+          </div></div>
+      </div>
+    </div>
+  </section>
+</main>
+<nav><div class="tab">OVERVIEW &amp; DATA</div><div class="tab">DATA QUALITY</div><div class="tab">SEMANTIC MODEL</div><div class="tab">PIPELINE &amp; ARCHITECTURE</div><div class="tab">EVALUATION METRICS</div><div class="tab on">GUARD &amp; RBAC</div></nav>
+</section>
+</body>
+</html>

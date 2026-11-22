@@ -1,0 +1,43 @@
+# PayLens — systemd user service.
+#   install:  ./deploy/local/install.sh
+#   control:  systemctl --user {start,stop,restart,status} paylens
+#   logs:     journalctl --user -u paylens -f
+[Unit]
+Description=PayLens — AI Business Analyst for payments
+Documentation=file://%h/paylens/README.md
+After=network-online.target
+
+[Service]
+Type=exec
+WorkingDirectory=__PROJECT_DIR__
+# Optional. `-` means "ignore if absent", so the service still starts with no
+# API key — the deterministic path handles every demo question.
+EnvironmentFile=-__PROJECT_DIR__/.env
+Environment=PORT=8000
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__VENV__/bin/python -m uvicorn backend.api.main:app \
+          --host 0.0.0.0 --port ${PORT} --workers 1 --timeout-keep-alive 65
+
+# The full build loads a ~167MB ONNX embedding model at startup, so give it room
+# before systemd decides the start failed.
+TimeoutStartSec=180
+Restart=on-failure
+RestartSec=5
+# Don't fight a genuinely broken config forever.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Modest hardening. The app only needs to read its own directory and reach
+# openrouter.ai; it never writes outside CHROMA_PATH.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=paylens
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,13 @@
+# Serving dependencies only.
+#
+# pandas / pyarrow / numpy are NOT here: they are used exclusively by
+# data/generate.py, which runs at BUILD time. Excluding them from the runtime
+# layer removes ~267 MB from the image for no loss of function.
+duckdb==2.0.1
+sqlglot==30.33.0
+pydantic==2.14.4
+PyYAML==6.0.3
+python-dotenv==1.0.1
+openai==3.57.0
+fastapi==0.115.6
+uvicorn[standard]==0.34.0

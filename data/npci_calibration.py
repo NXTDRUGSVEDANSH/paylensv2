@@ -196,18 +196,173 @@ PENDING_RATE = 0.004
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Failure codes, mapped to NPCI's TD/BD split and to an owning party
+# FAILURE CODES — the payment journey, step 1 to 10
+#
+# Replaces the earlier 7-code table. The codes are now modelled on the actual
+# Pine Labs journey (amount entry -> terminal -> acquirer -> issuer -> slip ->
+# settlement) so that "where in the journey did it break" is answerable, which the
+# flat code list could not do.
+#
+# THE NPCI SCOPE PROBLEM, AND HOW IT IS RESOLVED
+# ----------------------------------------------
+# NPCI's published technical decline of 0.24% covers faults at the BANK or at NPCI
+# — issuer down, issuer timeout, response lost. It does NOT cover a logged-out
+# terminal, a faulty card reader, a dead SIM or a gateway bug, because none of
+# those reach NPCI's switch. A card-present journey therefore has strictly more
+# technical failure than NPCI's UPI number, and quoting 0.24% as the overall
+# technical decline of a POS estate would understate it by roughly 5x.
+#
+# So the model is split rather than fudged:
+#
+#   * UPI keeps the NPCI anchors exactly — BD 10.88%, TD 0.24% of UPI attempts,
+#     with the per-bank profile (ICICI's 0.73% TD and so on) preserved.
+#   * Card-present rails carry the terminal- and gateway-side technical codes
+#     inside their own already-modelled failure budget.
+#   * `npci_td_scope` marks the codes NPCI would actually count, so the comparable
+#     subset stays auditable against the published figure.
+#
+# Overall technical decline lands near 1.1% of attempts, which is the realistic
+# number for an estate with terminals in it, while the NPCI-comparable slice still
+# reconciles to 0.24%. data/verify.py asserts both separately.
+#
+# WEIGHTS ARE [MODELLED]. NPCI publishes the BD/TD split but not a code-level
+# breakdown, so the relative weights below are industry-shaped choices: they are
+# ordered so INSUFFICIENT_FUNDS and WRONG_PIN are the two largest codes, which is
+# what every published decline post-mortem reports. Every one is listed in
+# ASSUMPTIONS.md. Nothing here is an NPCI figure.
+#
+# `modes` restricts a code to the entry modes where it is physically possible: a
+# chip read error cannot happen on a QR payment and a tap limit cannot be exceeded
+# when the card was never tapped. Without that restriction the failure mix is
+# internally contradictory and any journey-step analysis is fiction.
 # ─────────────────────────────────────────────────────────────────────────────
-#  code, category, description, is_retriable, owner, decline_class, rel_weight
-FAILURE_CODES = [
-    ("F-101", "insufficient_funds", "Insufficient funds",                True,  "issuer",   "business",  0.34),
-    ("F-102", "issuer_decline",     "Issuer declined the request",       True,  "issuer",   "business",  0.22),
-    ("F-103", "limit_exceeded",     "Transaction exceeds stipulated limit", True, "issuer", "business",  0.11),
-    ("F-104", "invalid_credential", "Incorrect PIN or VPA",              False, "merchant", "business",  0.14),
-    ("F-105", "risk_block",         "Blocked by risk engine",            False, "network",  "business",  0.07),
-    ("F-106", "timeout",            "Issuer or NPCI response timeout",   True,  "issuer",   "technical", 0.07),
-    ("F-107", "technical_error",    "Acquirer or switch technical error", True, "acquirer", "technical", 0.05),
+
+ENTRY_MODES = ["tap", "chip", "swipe", "qr", "online"]
+CARD_PRESENT_MODES = ("tap", "chip", "swipe")
+
+JOURNEY_STEPS = {
+    1:  "Amount entry",
+    2:  "Choose method",
+    3:  "Card read",
+    4:  "Authentication",
+    5:  "Terminal to Pine Labs",
+    6:  "Pine Labs routing",
+    7:  "Acquirer / network",
+    8:  "Issuer decision",
+    9:  "Response / slip",
+    10: "Settlement",
+}
+
+# [MODELLED] entry-mode mix per rail. Netbanking is a browser redirect so it is
+# always `online`; UPI is QR at the counter or an in-app collect request.
+ENTRY_MODE_MIX = {
+    "UPI":        {"qr": 0.55, "online": 0.45},
+    "CARD":       {"tap": 0.46, "chip": 0.38, "swipe": 0.10, "online": 0.06},
+    "NETBANKING": {"online": 1.00},
+    "WALLET":     {"online": 0.72, "qr": 0.28},
+    "EMI":        {"chip": 0.62, "swipe": 0.13, "online": 0.25},
+}
+
+# [MODELLED] What fraction of a rail's failures are technical rather than business.
+# UPI is NOT listed: it is derived per bank from the NPCI-calibrated BD/TD ratio,
+# which is what keeps the published anchor exact. The others carry terminal and
+# gateway faults, so their technical share is much higher.
+TECH_SHARE_OF_FAILURES = {
+    "CARD": 0.25, "NETBANKING": 0.12, "WALLET": 0.10, "EMI": 0.22,
+}
+
+# A degraded terminal or a weak SIM does not change HOW OFTEN a payment fails in
+# this model — it changes WHY. These multiply the technical share of failures on
+# that terminal, so the failure mix shifts toward NETWORK_TIMEOUT / TERM_OFFLINE
+# without perturbing the success-rate surface the decomposition is pinned to.
+DEGRADED_TERMINAL_TECH_BOOST = 2.2
+SIM_TERMINAL_TECH_BOOST = 1.45
+
+#     code, category, description, step, owner, decline_type, retriable, npci, weight, modes
+JOURNEY_FAILURE_CODES = [
+    # ── business ────────────────────────────────────────────────────────────
+    ("AMT_MISMATCH",       "amount_mismatch",    "Wrong amount entered or billing not linked",
+     1, "merchant", "business", True,  False, 0.03,  "*"),
+    ("EMI_INELIGIBLE",     "emi_ineligible",     "Card not eligible for EMI",
+     2, "customer", "business", False, False, 0.30,  ("chip", "swipe", "online")),
+    ("OFFER_INVALID",      "offer_invalid",      "Offer expired or misconfigured",
+     2, "merchant", "business", False, False, 0.03,  "*"),
+    ("CHIP_READ_ERR",      "card_read_error",    "Damaged chip or magnetic stripe",
+     3, "customer", "business", True,  False, 0.14,  ("chip", "swipe")),
+    ("TAP_LIMIT",          "limit_exceeded",     "Contactless limit exceeded",
+     3, "customer", "business", True,  False, 0.10,  ("tap",)),
+    ("WRONG_PIN",          "invalid_credential", "Wrong PIN or UPI PIN",
+     4, "customer", "business", True,  False, 0.26,  ("tap", "chip", "swipe", "qr", "online")),
+    ("PIN_TRIES_EXCEEDED", "invalid_credential", "PIN attempts exceeded",
+     4, "customer", "business", False, False, 0.05,  ("tap", "chip", "swipe", "qr", "online")),
+    ("USER_ABANDONED",     "user_abandoned",     "Customer gave up before authorising",
+     4, "customer", "business", True,  False, 0.08,  "*"),
+    ("FRAUD_BLOCK",        "risk_block",         "Blocked by risk or fraud rules",
+     6, "pine_labs", "business", False, False, 0.04, "*"),
+    ("INSUFFICIENT_FUNDS", "insufficient_funds", "Not enough balance",
+     8, "customer", "business", True,  False, 0.34,  "*"),
+    ("LIMIT_EXCEEDED",     "limit_exceeded",     "Daily or per-transaction limit hit",
+     8, "customer", "business", True,  False, 0.09,  "*"),
+    ("CARD_BLOCKED",       "card_blocked",       "Card blocked or expired",
+     8, "customer", "business", False, False, 0.07, ("tap", "chip", "swipe", "online")),
+
+    # ── technical ───────────────────────────────────────────────────────────
+    ("TERM_LOGGED_OUT",    "terminal_fault",     "Terminal logged out or software outdated",
+     1, "terminal", "technical", True,  False, 0.06, CARD_PRESENT_MODES),
+    ("QR_GEN_FAIL",        "qr_generation",      "QR code could not be generated",
+     2, "pine_labs", "technical", True, False, 0.08, ("qr",)),
+    ("READER_FAULT",       "terminal_fault",     "Faulty card reader",
+     3, "terminal", "technical", True,  False, 0.10, CARD_PRESENT_MODES),
+    ("NETWORK_TIMEOUT",    "connectivity",       "Weak SIM or Wi-Fi, request timed out",
+     5, "terminal", "technical", True,  False, 0.22, CARD_PRESENT_MODES),
+    ("TERM_OFFLINE",       "connectivity",       "Terminal offline",
+     5, "terminal", "technical", True,  False, 0.12, CARD_PRESENT_MODES),
+    ("GATEWAY_ERROR",      "gateway_error",      "Internal gateway error",
+     6, "pine_labs", "technical", True, False, 0.10, "*"),
+    ("ROUTED_TO_DEGRADED", "routing_fault",      "Routed to a degraded acquirer",
+     6, "pine_labs", "technical", True, False, 0.05, "*"),
+    ("ACQUIRER_DOWN",      "acquirer_unavailable", "Acquiring bank unavailable",
+     7, "acquirer", "technical", True, False, 0.06, "*"),
+    ("NETWORK_OUTAGE",     "network_fault",      "Card network or NPCI outage",
+     7, "network", "technical", True,  False, 0.04, "*"),
+    ("ISSUER_DOWN",        "issuer_unavailable", "Issuer server down",
+     8, "issuer", "technical", True,   True,  0.08, "*"),
+    ("ISSUER_TIMEOUT",     "issuer_unavailable", "Issuer too slow to respond",
+     8, "issuer", "technical", True,   True,  0.12, "*"),
+    ("RESPONSE_LOST",      "response_lost",      "Approved but the reply was lost, reversal raised",
+     9, "network", "technical", True,  True,  0.04, "*"),
+    ("DUPLICATE_CHARGE",   "duplicate_charge",   "Customer charged twice",
+     9, "pine_labs", "technical", False, False, 0.02, "*"),
+    ("BATCH_NOT_CLOSED",   "settlement_fault",   "Batch not closed, so not settled",
+     10, "merchant", "technical", True, False, 0.01, CARD_PRESENT_MODES),
+    ("SETTLEMENT_MISMATCH", "settlement_fault",  "Counts differ between systems",
+     10, "pine_labs", "technical", True, False, 0.01, "*"),
 ]
+
+# ── The second planted story: a 3-hour acquirer incident ────────────────────
+# Deliberately placed OUTSIDE both the baseline and target weeks of the mix-shift
+# story (2026-11-02 .. 2026-11-15). The two stories must be independently
+# diagnosable: if the incident sat inside the comparison window it would leak a
+# rate effect into the mix decomposition and verify.py's exact-identity assertion
+# would be measuring both at once.
+ACQUIRER_INCIDENT = {
+    "date": "2026-10-28",
+    "acquirer_bank_id": "B-53",        # ICICI Bank (Acquiring)
+    "hour_from": 14,
+    "hour_to": 17,                     # exclusive
+    "success_to_failure_rate": 0.45,   # of successes in the window, flipped
+    "codes": ("ACQUIRER_DOWN", "ISSUER_TIMEOUT"),
+    "code_weights": (0.72, 0.28),
+}
+
+
+def failure_codes_by_class(decline_type: str) -> list[tuple]:
+    return [c for c in JOURNEY_FAILURE_CODES if c[5] == decline_type]
+
+
+def code_eligible(code_row: tuple, entry_mode: str) -> bool:
+    modes = code_row[9]
+    return modes == "*" or entry_mode in modes
 
 
 def expected_decomposition() -> dict[str, float]:

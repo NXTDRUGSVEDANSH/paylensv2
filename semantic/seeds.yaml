@@ -14,7 +14,7 @@ questions:
     demo: true
   - q: "how many transactions did merchant M-1042 process in October"
     demo: true
-  - q: "what is our success rate"
+  - q: "what is our success rate last week"
     demo: true
   - q: "show me success rate by payment method last week vs the week before"
     demo: true

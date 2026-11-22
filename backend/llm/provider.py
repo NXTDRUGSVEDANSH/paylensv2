@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from backend import config
+from backend.core import events
 
 log = logging.getLogger("paylens.llm")
 
@@ -63,11 +64,39 @@ class CallBudget:
         return sum(self.used.values())
 
 
-def _client():
-    if not config.LLM_API_KEY:
-        raise LLMUnavailable("LLM_API_KEY is not set — copy .env.example to .env")
+@dataclass(frozen=True)
+class Route:
+    """Where a given model is reached, and how much room it needs."""
+    model: str
+    api_key: str
+    base_url: str
+    max_tokens: int
+
+
+def _routes() -> dict[str, Route]:
+    return {
+        config.PLANNER_MODEL: Route(config.PLANNER_MODEL, config.PLANNER_API_KEY,
+                                    config.PLANNER_BASE_URL, config.PLANNER_MAX_TOKENS),
+        config.NARRATOR_MODEL: Route(config.NARRATOR_MODEL, config.NARRATOR_API_KEY,
+                                     config.NARRATOR_BASE_URL, config.LLM_MAX_TOKENS),
+    }
+
+
+def route_for(model: str | None) -> Route:
+    model = model or config.PLANNER_MODEL
+    r = _routes().get(model)
+    if r is not None:
+        return r
+    return Route(model, config.LLM_API_KEY, config.LLM_BASE_URL, config.LLM_MAX_TOKENS)
+
+
+def _client(route: Route):
+    if not route.api_key:
+        raise LLMUnavailable(
+            f"no API key configured for '{route.model}' — set PLANNER_API_KEY / "
+            f"NARRATOR_API_KEY, or LLM_API_KEY for both")
     from openai import OpenAI
-    return OpenAI(api_key=config.LLM_API_KEY, base_url=config.LLM_BASE_URL)
+    return OpenAI(api_key=route.api_key, base_url=route.base_url)
 
 
 def _is_quota_error(exc: Exception) -> bool:
@@ -97,7 +126,8 @@ def strip_reasoning(raw: str) -> tuple[str, str]:
 
 def call_text(prompt: str, *, system: str | None = None, model: str | None = None,
               purpose: str = "plan", budget: CallBudget | None = None,
-              temperature: float | None = None, max_retries: int = 3) -> str:
+              temperature: float | None = None, max_retries: int = 3,
+              response_format: dict | None = None) -> str:
     model = model or config.PLANNER_MODEL
     if budget is not None:
         budget.spend(purpose)
@@ -106,33 +136,56 @@ def call_text(prompt: str, *, system: str | None = None, model: str | None = Non
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
+    route = route_for(model)
     t0 = time.time()
     last: Exception | None = None
     for attempt in range(max_retries):
         try:
-            resp = _client().chat.completions.create(
-                model=model, messages=messages,
+            # response_format is passed only when a caller asks for it, so the
+            # request shape is unchanged for every existing call site. Providers
+            # that do not support it reject the whole request, which is why it is
+            # opt-in rather than always-on.
+            extra = {"response_format": response_format} if response_format else {}
+            resp = _client(route).chat.completions.create(
+                model=route.model, messages=messages,
                 temperature=config.LLM_TEMPERATURE if temperature is None else temperature,
-                max_tokens=config.LLM_MAX_TOKENS, timeout=config.LLM_TIMEOUT_S)
-            raw = (resp.choices[0].message.content or "").strip()
+                max_tokens=route.max_tokens, timeout=config.LLM_TIMEOUT_S, **extra)
+            choice = resp.choices[0]
+            raw = (choice.message.content or "").strip()
             _, cleaned = strip_reasoning(raw)
             if not cleaned:
-                raise LLMUnavailable("empty content (truncated <think> block?)")
+                # Some providers (NVIDIA NIM, several "thinking" models) return the
+                # monologue in a separate field and leave content empty when the
+                # budget runs out mid-thought. Say which it was: a truncated
+                # reasoning block is a token-budget problem, not a dead endpoint.
+                extra = getattr(choice.message, "reasoning_content", None) or ""
+                if not extra:
+                    me = getattr(choice.message, "model_extra", None) or {}
+                    extra = me.get("reasoning_content") or me.get("reasoning") or ""
+                if extra and choice.finish_reason == "length":
+                    raise LLMUnavailable(
+                        f"model spent its whole {route.max_tokens}-token budget "
+                        f"reasoning and produced no answer — raise PLANNER_MAX_TOKENS")
+                raise LLMUnavailable("empty content from the model")
             if budget is not None:
-                budget.records.append(CallRecord(purpose, model, int((time.time() - t0) * 1000), True))
+                budget.records.append(CallRecord(purpose, route.model, int((time.time() - t0) * 1000), True))
             return cleaned
         except Exception as exc:  # noqa: BLE001
             last = exc
             if attempt < max_retries - 1 and (_is_quota_error(exc) or "empty content" in str(exc)):
                 wait = _retry_delay(exc, 5.0 * (2 ** attempt))
                 log.warning("LLM retry %d/%d in %.1fs: %s", attempt + 1, max_retries, wait, exc)
+                events.recovery(
+                    "model", f"{route.model} did not answer — retrying "
+                             f"({attempt + 1} of {max_retries - 1}) after {wait:.1f}s",
+                    detail=str(exc)[:300])
                 time.sleep(wait)
                 continue
             break
     if budget is not None:
         budget.records.append(
-            CallRecord(purpose, model, int((time.time() - t0) * 1000), False, str(last)))
-    raise LLMUnavailable(f"{model} failed after {max_retries} attempts: {last}")
+            CallRecord(purpose, route.model, int((time.time() - t0) * 1000), False, str(last)))
+    raise LLMUnavailable(f"{route.model} failed after {max_retries} attempts: {last}")
 
 
 _FENCE = re.compile(r"```(?:json|sql)?\s*(.*?)```", re.DOTALL)
@@ -200,4 +253,5 @@ def call_json(prompt: str, *, system: str | None = None, model: str | None = Non
 
 
 def available() -> bool:
-    return bool(config.LLM_API_KEY)
+    """True when BOTH roles can actually be reached."""
+    return bool(config.PLANNER_API_KEY) and bool(config.NARRATOR_API_KEY)

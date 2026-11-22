@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PayLens</title>
+<meta name="description" content="Ask about payment performance in English. Every number traces back to the query that produced it.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='4' fill='%23003323'/><circle cx='8' cy='8' r='3.2' fill='%2350D387'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<a class="skip" href="#q">Skip to the question box</a>
+
+<!-- ─── sidebar ──────────────────────────────────────────────────────────
+     Pine green, three stacked zones: brand, history (scrolls), account
+     (pinned to the bottom). The account block sits below the history because
+     signing in is optional here — it is a setting, not a gate. -->
+<aside id="rail" aria-label="Conversations and account">
+
+  <div class="rail-top">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"></span>
+      <span class="wordmark">PayLens<em>v2</em></span>
+    </div>
+    <button id="railclose" class="iconbtn only-narrow" aria-label="Close the sidebar">✕</button>
+  </div>
+
+  <button id="newchat" class="newchat" type="button">
+    <span class="plus" aria-hidden="true">+</span> New chat
+  </button>
+
+  <nav id="history" class="history" aria-label="Recent conversations"></nav>
+
+  <!-- ─── account: optional sign-in, below the history ─────────────── -->
+  <div class="account">
+    <button id="acctbtn" class="acctbtn" type="button" aria-expanded="false" aria-controls="acctpanel">
+      <span class="avatar" id="avatar" aria-hidden="true"></span>
+      <span class="acctwho">
+        <b id="acctname">Not signed in</b>
+        <i id="acctrole">&nbsp;</i>
+      </span>
+      <span class="chev" aria-hidden="true"></span>
+    </button>
+
+    <div id="acctpanel" class="acctpanel" hidden>
+      <div id="acctbody"></div>
+
+      <form id="loginform" autocomplete="on">
+        <label for="u">Username</label>
+        <input id="u" name="username" autocomplete="username" spellcheck="false" required>
+        <label for="pw">Password</label>
+        <input id="pw" name="password" type="password" autocomplete="current-password" required>
+        <p id="loginerr" class="loginerr" role="alert" hidden></p>
+        <button class="primary" type="submit" id="loginbtn">Sign in</button>
+        <p class="railnote">Optional. Signing in changes the row filter the guard
+          puts into your SQL — you can watch it appear in the SQL tab.</p>
+        <div id="demousers"></div>
+      </form>
+    </div>
+  </div>
+</aside>
+
+<div id="scrim" class="scrim" hidden></div>
+
+<!-- ─── main ─────────────────────────────────────────────────────────── -->
+<main>
+  <header class="topbar">
+    <button id="railopen" class="iconbtn only-narrow" aria-label="Open the sidebar">☰</button>
+    <h1 id="threadtitle">New chat</h1>
+    <div class="topright">
+      <div id="health" class="health" aria-live="polite"></div>
+      <button id="theme" class="iconbtn" aria-label="Switch between light and dark">◐</button>
+    </div>
+  </header>
+
+  <!-- The scroll container. Thread and empty state live inside it so a new
+       question can be pinned to the top of the viewport on submit. -->
+  <div id="scroller" class="scroller">
+    <div class="column">
+
+      <section id="empty" class="empty">
+        <p class="hero">Ask what happened to your
+          <span class="hero-em">payments</span>. Get the working, not just the number.</p>
+        <p class="hero-sub">A language model writes the SQL. The guard decides
+          whether it runs. Python computes every figure in the answer, so a number
+          you can see is a number that traces back to a query.</p>
+
+        <h2 class="lede">Try one</h2>
+        <div id="chips" class="chips"></div>
+
+        <h2 class="lede">What happens when you press return</h2>
+        <!-- Numbered because this genuinely is a sequence, not decoration. -->
+        <ol class="rail7">
+          <li><b>Author</b><span>A model writes SQL from the schema card and retrieved examples.</span></li>
+          <li><b>Check</b><span>Views only. No <code>SELECT *</code>. Metric formulas verbatim.</span></li>
+          <li><b>Guard</b><span>The same nine checks the compiled pipeline passes.</span></li>
+          <li><b>Execute</b><span>Read-only, with a timeout and a row cap.</span></li>
+          <li><b>Profile</b><span>Python measures the result into numbered facts.</span></li>
+          <li><b>Compose</b><span>Prose from the fact pack, then a grounding check.</span></li>
+          <li><b>Learn</b><span>The query is kept as an unverified example.</span></li>
+        </ol>
+
+        <h2 class="lede">Built in</h2>
+        <dl class="feat">
+          <div><dt>Role-aware rows</dt><dd>A merchant account cannot read another
+            merchant's rows. The filter goes into the SQL and is re-checked after
+            injection.</dd></div>
+          <div><dt>No invented figures</dt><dd>Every number in the prose must appear
+            in the measured fact pack, or the composition is discarded and the
+            measured answer shown instead.</dd></div>
+          <div><dt>It asks back</dt><dd>When a question genuinely has two answers,
+            you get the question that separates them — not a fixed metric picker.</dd></div>
+          <div><dt>Honest failure</dt><dd>A query that would not build says so. Only
+            a missing concept is reported as missing from your data.</dd></div>
+          <div><dt>Charts that follow the data</dt><dd>The model proposes a chart
+            before any row exists; the real result overrides it, and every override
+            is printed under the chart.</dd></div>
+          <div><dt>Follow-ups</dt><dd>A later question inherits the period and filters
+            of the one before it, and replaces what it states itself.</dd></div>
+        </dl>
+      </section>
+
+      <div id="thread" class="thread"></div>
+    </div>
+  </div>
+
+  <!-- ─── composer ───────────────────────────────────────────────────── -->
+  <div class="composer-wrap">
+    <form id="composer" class="composer">
+      <textarea id="q" rows="1" placeholder="Ask about payment performance"
+        aria-label="Your question" autocomplete="off"></textarea>
+      <button id="go" class="send" type="submit" aria-label="Send the question">
+        <svg viewBox="0 0 20 20" aria-hidden="true" width="18" height="18">
+          <path d="M10 16.5V4.2M4.6 9.6 10 3.8l5.4 5.8" fill="none"
+                stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </form>
+    <p id="ctx" class="ctx"></p>
+  </div>
+</main>
+
+<!-- charts.js reads --s1..--s7 off :root and writes tooltips into #tip. -->
+<div id="tip" role="status" aria-live="polite"></div>
+<script src="charts.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

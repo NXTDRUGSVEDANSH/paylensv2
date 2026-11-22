@@ -132,3 +132,65 @@ def test_expensive_query_blocked_by_cost_estimate():
         assert "Narrow the time window" in res.reason
     finally:
         config.EXPLAIN_SCAN_LIMIT = orig
+
+
+# ── regression: scope leak when the scoped dimension's table is not joined ───
+# The original implementation injected the region filter only into SELECTs that
+# referenced dim_merchant. A query like "success rate by payment method" never
+# joins it, so a regional manager received EVERY region's data with no predicate
+# at all — and the earlier test passed only because its SQL happened to join
+# dim_merchant. These tests use queries that deliberately do not.
+
+REGIONAL_SQL_NO_MERCHANT_JOIN = """
+    SELECT pm.method, count(*) AS n
+    FROM fact_transactions t
+    JOIN dim_payment_method pm ON pm.pm_id = t.pm_id
+    GROUP BY 1
+"""
+
+
+def test_region_scope_applies_even_when_dim_merchant_is_not_joined():
+    res = guard(REGIONAL_SQL_NO_MERCHANT_JOIN, REGIONAL, M)
+    assert res.ok
+    assert "'South'" in res.sql, "regional manager was served unscoped rows"
+    assert "dim_merchant" in res.sql, "no semi-join to the scoping table"
+    assert res.injected_predicates
+
+
+def test_region_scope_is_a_semijoin_on_the_fact_table():
+    from backend.core.rbac import row_predicates
+    pred = row_predicates(REGIONAL, M)[0]
+    assert pred.is_semijoin
+    assert pred.table == "fact_transactions"      # anchored where it is always present
+    assert pred.lookup_table == "dim_merchant"
+    assert "IN (SELECT" in pred.sql("t")
+
+
+def test_merchant_scope_stays_a_direct_equality():
+    """merchant_id is on the fact table, so it needs no subquery."""
+    from backend.core.rbac import row_predicates
+    pred = row_predicates(MERCHANT, M)[0]
+    assert not pred.is_semijoin
+    assert pred.sql("t") == "t.merchant_id = 'M-1042'"
+
+
+def test_check9_accepts_the_semijoin_form():
+    """Check 9 must recognise IN (SELECT ...), not only equality."""
+    import sqlglot
+    from backend.core.rbac import assert_injected, row_predicates
+    preds = row_predicates(REGIONAL, M)
+    ast = sqlglot.parse_one(guard(REGIONAL_SQL_NO_MERCHANT_JOIN, REGIONAL, M).sql,
+                            read="duckdb")
+    ok, why = assert_injected(ast, preds)
+    assert ok, why
+
+
+def test_check9_rejects_a_stripped_semijoin():
+    """If the semi-join is removed, check 9 must notice."""
+    import sqlglot
+    from backend.core.rbac import assert_injected, row_predicates
+    preds = row_predicates(REGIONAL, M)
+    stripped = sqlglot.parse_one(
+        "SELECT count(*) FROM fact_transactions WHERE status = 'SUCCESS'", read="duckdb")
+    ok, why = assert_injected(stripped, preds)
+    assert not ok and "missing" in why.lower()

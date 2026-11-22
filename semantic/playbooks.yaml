@@ -1,0 +1,487 @@
+# Advisory catalogue — the theoretical path.
+#
+# Some questions have no computable answer. "How do I improve my success rate"
+# is not a number; neither is "what is a technical decline" or "is 86% good".
+# The metric pipeline cannot answer them, and until now it offered a metric
+# picker instead, which answers a question the user did not ask.
+#
+# The tempting implementation is to hand the sentence to an LLM and print what
+# comes back. That produces confident consultancy prose with invented numbers —
+# in a tool whose entire value proposition is that every number is traceable to
+# SQL, it is the worst possible failure.
+#
+# So the advisory path works the same way the Action Engine does: the SUBSTANCE
+# is selected from this catalogue, the NUMBERS are measured from the live estate
+# through the same guard and access scope as any other query, and the model's
+# job is reduced to writing those two things up as readable prose. Anything it
+# says that is not in one or the other is caught by the grounding check in
+# backend/core/advisory.py and the whole composition is discarded.
+#
+# Editing this file changes what PayLens advises. That is the point: the advice
+# is reviewable by a payments person who does not read Python.
+
+version: pb-2026-11-21-01
+
+# ── definitions ─────────────────────────────────────────────────────────────
+# Answers to "what is X". Deliberately written against THIS dataset's
+# vocabulary, not against payments in general, so a definition and a breakdown
+# of the same concept can never disagree.
+glossary:
+  - id: technical_decline
+    term: Technical decline
+    aka: [technical, technical failure, system failure, tech decline, td]
+    says: >
+      A failure caused by our side of the rails rather than by the customer:
+      terminal, connectivity, gateway, acquirer, switch or issuer system. In
+      this model `dim_failure_code.decline_type = 'technical'` marks them, and
+      ACQUIRER_DOWN, ISSUER_TIMEOUT, GATEWAY_ERROR and TERMINAL_OFFLINE are
+      the ones that carry the volume.
+    matters: >
+      A technical decline is a payment that should have succeeded. It is the
+      part of the failure rate that is actually recoverable by fixing
+      something, which is why it is tracked separately from a decline the
+      customer caused.
+    probes: [decline_split, owner_split]
+    see_also: [business_decline, npci_td]
+
+  - id: business_decline
+    term: Business decline
+    aka: [business, business failure, customer side failure, bd]
+    says: >
+      A failure the rails produced correctly: there was no money, the PIN was
+      wrong, the card was expired or blocked, a limit was hit. In this model
+      `dim_failure_code.decline_type = 'business'`, and INSUFFICIENT_FUNDS and
+      WRONG_PIN are the two largest.
+    matters: >
+      Business declines are not a platform defect and mostly cannot be
+      engineered away. Counting them inside "failure rate" and then asking
+      engineering to fix it is the most common way a payments dashboard
+      misdirects a team.
+    probes: [decline_split, top_codes]
+    see_also: [technical_decline, retriable]
+
+  - id: success_rate
+    term: Success rate
+    aka: [sr, approval rate, auth rate, conversion]
+    says: >
+      Successful attempts divided by RESOLVED attempts — successes plus
+      failures. PENDING attempts are excluded from the denominator, because a
+      payment that has not resolved yet is not a payment that failed.
+    matters: >
+      The denominator is the whole argument. Counting PENDING as failure gives
+      a different and lower number, which this model also carries as
+      `success_rate_incl_pending` so the two can be compared rather than
+      confused.
+    probes: [headline_rates]
+    see_also: [technical_decline, mix_vs_rate]
+
+  - id: mix_vs_rate
+    term: Mix effect vs rate effect
+    aka: [mix shift, simpson, simpsons paradox, traffic mix, composition]
+    says: >
+      When an overall rate moves, two different things can have caused it.
+      Either each segment started converting differently (RATE effect), or the
+      segments kept their own rates and the TRAFFIC moved between them (MIX
+      effect). PayLens separates the two and the parts sum to the observed
+      change exactly.
+    matters: >
+      They demand opposite responses. A rate effect is an incident — page
+      someone. A mix effect is a business change — the rails are fine and the
+      traffic moved, so the question belongs to whoever changed checkout,
+      pricing or campaigns. Reading one as the other sends the wrong team.
+    probes: []
+    see_also: [success_rate]
+
+  - id: npci_td
+    term: NPCI technical decline (TD)
+    aka: [npci td, published td, upi td, npci technical decline rate]
+    says: >
+      NPCI publishes a UPI technical-decline rate covering faults on the BANK
+      and NPCI side only — remitter and beneficiary bank systems, and the
+      switch. It does not cover a terminal that lost connectivity or a gateway
+      that timed out before the transaction reached the rails.
+    matters: >
+      It is a scope, not a target. Comparing a whole-estate technical rate to
+      the published NPCI figure compares two different populations and makes
+      an estate look broken when it is not. This dataset tracks the in-scope
+      subset separately for exactly that reason.
+    probes: [decline_split]
+    see_also: [technical_decline]
+
+  - id: journey_step
+    term: Journey step
+    aka: [stage, step, where it failed, payment journey]
+    says: >
+      The point in the ten-step Pine Labs payment journey where an attempt
+      stopped: entry, tokenisation, routing, acquirer, switch, issuer auth,
+      risk, capture, settlement. Every failure code is assigned to exactly one.
+    matters: >
+      It converts "12% of payments failed" into "they failed HERE", which is
+      the difference between a number and a work item. It is also the fastest
+      way to tell whether a spike is yours: a jump at the terminal or gateway
+      step is ours, a jump at issuer auth is usually not.
+    probes: [journey_shape]
+    see_also: [technical_decline]
+
+  - id: retriable
+    term: Retriable
+    aka: [retryable, worth retrying, can be retried, retry]
+    says: >
+      A failure code flagged as one where the SAME payment could succeed on a
+      later attempt. Timeouts and switch errors are retriable immediately;
+      insufficient funds is retriable later, when the customer has money; a
+      wrong PIN or a blocked card is not retriable at all without the customer
+      doing something different.
+    matters: >
+      "Retriable" is not one thing, and treating it as one is how retry logic
+      starts hammering issuers with attempts that cannot succeed. The
+      immediate-retry set and the retry-later set need different machinery.
+    probes: [retriable_share]
+    see_also: [business_decline, technical_decline]
+
+  - id: entry_mode
+    term: Entry mode
+    aka: [capture mode, tap chip swipe, how it was paid]
+    says: >
+      How the card was presented: tap (contactless), chip (dip), swipe
+      (magstripe) or online (card-not-present). Card-present modes ride on a
+      physical terminal; online does not.
+    matters: >
+      Entry mode is a lever you can actually pull, through terminal
+      configuration and prompts. Swipe is the weakest mode in most estates and
+      moving its volume to chip or tap is a configuration change rather than an
+      engineering project.
+    probes: [entry_mode_gap]
+    see_also: [terminal_health]
+
+  - id: terminal_health
+    term: Terminal health
+    aka: [terminal condition, device health, estate health]
+    says: >
+      A per-terminal condition flag — healthy or degraded — alongside its
+      connectivity type (SIM or WiFi). It describes the device, not the
+      merchant.
+    matters: >
+      A degraded terminal does not fail more payments at random: it changes
+      WHY they fail, shifting the mix toward timeouts and offline errors. That
+      is why terminal problems hide inside an unchanged headline rate.
+    probes: [terminal_gap]
+    see_also: [technical_decline, entry_mode]
+
+  - id: acquirer_vs_issuer
+    term: Acquirer vs issuer
+    aka: [acquiring bank, issuing bank, who is at fault]
+    says: >
+      The acquirer is the bank on OUR side that processes the merchant's
+      transaction. The issuer is the bank on the CUSTOMER's side that holds the
+      account and makes the approve-or-decline decision.
+    matters: >
+      It decides who you call. A fault concentrated in one acquirer is ours to
+      escalate commercially; one concentrated in one issuer is the customer's
+      bank, and the only lever is routing or retry timing.
+    probes: [owner_split]
+    see_also: [technical_decline]
+
+# ── playbooks ───────────────────────────────────────────────────────────────
+# Answers to "how do I", "what should I do", "is this good". Every lever names
+# an owner and a PayLens question that checks it, because advice with no owner
+# never gets actioned and advice with no measurement never gets verified.
+playbooks:
+  - id: improve_success_rate
+    title: Improving success rate
+    matches: [improve success rate, increase success rate, raise success rate,
+              improve approval, increase approval, improve conversion,
+              reduce failures, reduce declines, lower failure rate,
+              fix my success rate, better success rate, how to improve]
+    frames: >
+      Success rate is not one problem. Separate the part of your failure rate
+      that is OURS from the part that is the customer's before choosing
+      anything to do, because only the first part responds to engineering.
+    probes: [headline_rates, decline_split, worst_rail, top_codes, retriable_share]
+    levers:
+      - lever: Fix the technical decline rate first; it is the only failure you fully own.
+        owner: Platform / Acquiring
+        why: >
+          Technical declines are payments that should have succeeded. They are
+          usually concentrated in a few codes, a few terminals or a few hours,
+          which makes them both small and cheap to recover.
+        measure: technical decline rate by acquirer last week
+      - lever: Route away from the structurally weakest rail, or stop offering it at checkout.
+        owner: Product / Routing
+        why: >
+          A rail that converts well below the portfolio is rarely a bug. It is
+          a checkout-design decision, and the fastest fix is usually to change
+          what is offered rather than to repair the rail.
+        measure: success rate by payment method last week
+      - lever: Extend retries only to the codes that can actually succeed on a retry.
+        owner: Payment Ops
+        why: >
+          Retrying a wrong PIN or a blocked card adds load and cannot win. The
+          retriable flag on each failure code separates the ones that can.
+        measure: failures by retriable last week
+      - lever: Work the top two or three failure codes, not the long tail.
+        owner: Payment Ops
+        why: >
+          Failure codes are heavily concentrated. Clearing the tail is a large
+          amount of work for a change that will not be visible in the headline.
+        measure: failures by failure code last week
+      - lever: Check whether the headline moved because of traffic mix before investigating the rails.
+        owner: Analytics
+        why: >
+          If the mix effect dominates, every rail is behaving normally and
+          there is no incident to find. Investigating anyway costs a day and
+          finds nothing.
+        measure: why did our overall success rate drop last week
+    limits:
+      - This cannot tell you the revenue value of a recovered payment; it counts attempts.
+      - Customer-side declines are bounded by the customer's balance and bank, not by us.
+
+  - id: reduce_technical_declines
+    title: Reducing technical declines
+    matches: [reduce technical declines, fix technical declines, technical decline rate,
+              reduce timeouts, fix outages, gateway errors, acquirer issues,
+              reduce system failures, technical failures]
+    frames: >
+      Technical declines cluster. Before changing anything, find out whether
+      yours cluster by acquirer, by terminal, by hour or by journey step —
+      each one points at a different team.
+    probes: [decline_split, owner_split, journey_shape, terminal_gap]
+    levers:
+      - lever: Split the technical rate by acquirer before escalating anything.
+        owner: Acquiring
+        why: >
+          A spike confined to one acquirer over a few hours is an outage on
+          their side and an escalation. Spread evenly across all of them, it is
+          almost always our own gateway.
+        measure: technical decline rate by acquirer last week
+      - lever: Check the terminal estate — degraded devices change the failure mix, not the rate.
+        owner: Field Ops
+        why: >
+          A degraded terminal shifts failures toward timeouts and offline
+          errors without moving the headline much, so it is invisible unless
+          you look at the codes.
+        measure: failure rate by terminal health last week
+      - lever: Locate the failures on the journey before assigning them.
+        owner: Platform
+        why: >
+          A failure at the terminal or gateway step is ours. One at issuer auth
+          is the customer's bank and the lever is routing, not repair.
+        measure: failures by journey step last week
+      - lever: Compare against the right scope when quoting NPCI's published TD.
+        owner: Analytics
+        why: >
+          The published figure covers bank and NPCI-side faults only. Measuring
+          your whole estate against it compares two different populations.
+        measure: technical decline rate last month
+    limits:
+      - A daily rate can hide a three-hour incident; look at the hour when a day looks odd.
+      - Attributing a timeout to a specific party is inference, not something the data states.
+
+  - id: reduce_business_declines
+    title: Working business declines
+    matches: [reduce business declines, insufficient funds, wrong pin,
+              customer side failures, reduce customer declines, business decline rate,
+              expired card, card blocked]
+    frames: >
+      Business declines are mostly not fixable by payments engineering. The
+      realistic levers are timing, prompts and alternatives at checkout.
+    probes: [decline_split, top_codes]
+    levers:
+      - lever: Offer an alternative instrument immediately after a funds decline.
+        owner: Product / Checkout
+        why: >
+          Insufficient funds is the largest single code in most estates. The
+          customer intends to pay; the account they chose cannot.
+        measure: failures by failure code last week
+      - lever: Retry funds declines later, never immediately.
+        owner: Payment Ops
+        why: >
+          An immediate retry on the same account cannot succeed. The same
+          attempt hours later sometimes can, which is why this code is retriable
+          but not immediately retriable.
+        measure: failures by retriable last week
+      - lever: Treat wrong-PIN volume as a prompt and terminal-UX question.
+        owner: Field Ops / Product
+        why: >
+          Wrong PIN is a customer action at a device. It concentrates by entry
+          mode and by terminal, which makes it addressable even though it is
+          not a platform fault.
+        measure: failure rate by entry mode last week
+    limits:
+      - No change to our platform can create funds in a customer's account.
+      - These codes are reported by the issuer; we observe them, we do not assign them.
+
+  - id: retry_strategy
+    title: Retry strategy
+    matches: [should i retry, retry strategy, smart retry, retry logic,
+              should we retry, is it worth retrying, auto retry, retry failed]
+    frames: >
+      Retry is worth doing on exactly the codes that can change answer, and
+      harmful on the rest. The split is already in the data.
+    probes: [retriable_share, top_codes, decline_split]
+    levers:
+      - lever: Retry technical failures immediately; they are transient by definition.
+        owner: Payment Ops
+        why: >
+          A timeout or switch error means the attempt never reached a decision.
+          The same attempt, unchanged, can succeed seconds later.
+        measure: failures by failure code last week
+      - lever: Retry funds declines on a delay, and cap the attempts.
+        owner: Payment Ops
+        why: >
+          The account balance may change; retrying in the same second cannot
+          help and uncapped retries look like an attack to the issuer.
+        measure: failures by retriable last week
+      - lever: Never retry wrong PIN, blocked cards or expired cards.
+        owner: Payment Ops
+        why: >
+          Nothing about the attempt has changed, and repeated PIN failures can
+          lock the customer's card.
+        measure: failures by decline type last week
+      - lever: Measure retry rate as a cost, not only as a recovery.
+        owner: Payment Ops
+        why: >
+          Every retry is an attempt someone processes. A retry programme that
+          recovers little and attempts much is a cost increase.
+        measure: retry rate last week
+    limits:
+      - The dataset records attempts, not whether a retry was the same customer intent.
+
+  - id: terminal_estate
+    title: The terminal estate
+    matches: [terminal health, terminal estate, device health, improve terminals,
+              terminal connectivity, sim or wifi, replace terminals, field ops]
+    frames: >
+      Terminal condition rarely changes how OFTEN payments fail. It changes
+      WHY, which is why it hides from a headline rate.
+    probes: [terminal_gap, entry_mode_gap]
+    levers:
+      - lever: Rank terminals by recoverable attempts, not by failure rate.
+        owner: Field Ops
+        why: >
+          A terminal with a dramatic rate and thirty attempts is noise. One
+          with a modest gap and thousands of attempts is the visit worth making.
+        measure: failure rate by terminal health last week
+      - lever: Treat connectivity as a separate variable from condition.
+        owner: Field Ops
+        why: >
+          SIM and WiFi fail in different ways, and a replacement device on the
+          same bad link will present the same symptoms.
+        measure: success rate by connectivity last week
+      - lever: Move swipe volume to chip or tap where the terminal supports it.
+        owner: Field Ops / Product
+        why: >
+          Swipe is usually the weakest entry mode, and the change is terminal
+          configuration rather than an engineering project.
+        measure: success rate by entry mode last week
+    limits:
+      - A terminal's health flag is a condition, not a diagnosis of any one failure.
+
+  - id: routing_mix
+    title: Routing and rail mix
+    matches: [routing, rail mix, which rail, move traffic, route traffic,
+              payment method mix, should i offer, drop netbanking, checkout options]
+    frames: >
+      Rail choice is a checkout decision with a measurable conversion cost.
+      Treat it as a product question with a number attached.
+    probes: [worst_rail, headline_rates]
+    levers:
+      - lever: Price the weakest rail in recoverable attempts before removing it.
+        owner: Product / Routing
+        why: >
+          Removing a rail also removes the customers who only use it. The
+          conversion gap is one side of that trade; the volume is the other.
+        measure: success rate by payment method last week
+      - lever: Check whether a headline move is mix before treating it as degradation.
+        owner: Analytics
+        why: >
+          Traffic moving toward a weaker rail lowers the portfolio rate while
+          every rail is behaving exactly as before.
+        measure: why did our overall success rate drop last week
+      - lever: Look at rail performance by issuer before blaming the rail.
+        owner: Payment Ops
+        why: >
+          A rail that looks weak overall is sometimes one bad issuer inside it.
+        measure: success rate by issuer bank last week
+    limits:
+      - This data has no cost-per-transaction, so it cannot price a routing decision in rupees.
+
+  - id: benchmark
+    title: Is this number good
+    matches: [is that good, is this good, is it good, industry benchmark, benchmark,
+              how do we compare, is that normal, is this normal, good success rate,
+              what is a good success rate, industry average, are we doing well]
+    frames: >
+      PayLens has no industry benchmark data, and inventing one would be the
+      least defensible thing it could do. What it can give you is your own
+      distribution, which is the comparison that actually drives a decision.
+    probes: [headline_rates, worst_rail, decline_split]
+    levers:
+      - lever: Compare against your own best segment rather than an external figure.
+        owner: Analytics
+        why: >
+          Your strongest rail or issuer is a benchmark you already achieve, so
+          the gap to it is known to be reachable.
+        measure: success rate by payment method last week
+      - lever: Compare against your own last period.
+        owner: Analytics
+        why: >
+          Direction of travel is a decision input; a level is not, on its own.
+        measure: why did our overall success rate drop last week
+      - lever: Separate business from technical before any comparison.
+        owner: Analytics
+        why: >
+          Two estates with identical headline rates and different mixes of
+          customer-side declines are not comparable at all.
+        measure: technical decline rate last month
+    limits:
+      - No external benchmark is present in this dataset, and none is implied.
+      - NPCI's published TD is a scope-limited figure, not an estate-wide target.
+
+  - id: latency
+    title: Latency
+    matches: [latency, slow payments, response time, speed up payments,
+              reduce latency, payments are slow, timeout tuning]
+    frames: >
+      Latency matters here mainly through its relationship to timeouts, which
+      appear in the data as technical declines.
+    probes: [latency_shape, decline_split]
+    levers:
+      - lever: Read latency alongside the timeout codes, not on its own.
+        owner: Platform
+        why: >
+          An average that looks acceptable can still sit behind a tail that is
+          tripping timeouts.
+        measure: avg latency by payment method last week
+      - lever: Split latency by rail before tuning anything.
+        owner: Platform
+        why: >
+          Rails have genuinely different response profiles; one average over
+          all of them hides the one that moved.
+        measure: avg latency by payment method last week
+    limits:
+      - This dataset carries an average latency per attempt, not a percentile distribution.
+
+  - id: emi
+    title: EMI
+    matches: [emi, instalment, installment, emi eligibility, emi declines,
+              emi conversion, no cost emi]
+    frames: >
+      EMI carries its own eligibility failure mode, which is a business
+      decline and belongs in a different conversation from platform health.
+    probes: [headline_rates, top_codes]
+    levers:
+      - lever: Separate EMI eligibility failures from EMI processing failures.
+        owner: Product
+        why: >
+          An ineligible card was never going to convert on EMI. Counting it as
+          a platform failure overstates the problem and hides the real one.
+        measure: failures by failure code for EMI last week
+      - lever: Check eligibility before offering EMI at checkout.
+        owner: Product / Checkout
+        why: >
+          Every ineligible attempt is a customer who was shown an option they
+          could not use.
+        measure: success rate by payment method last week
+    limits:
+      - Eligibility rules are the issuer's, and this dataset records the outcome, not the rule.

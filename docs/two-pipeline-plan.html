@@ -1,0 +1,807 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>PayLens Two-Pipeline Plan</title>
+<style>
+  @page { size: A4; margin: 15mm 14mm 14mm; }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { font: 10.5pt/1.5 "Segoe UI", -apple-system, Helvetica, Arial, sans-serif;
+         color: #0f172a; margin: 0; }
+  h1 { font-size: 23pt; line-height: 1.15; margin: 0 0 6px; letter-spacing: -.4px; }
+  h2 { font-size: 14pt; margin: 0 0 10px; padding-bottom: 5px;
+       border-bottom: 2px solid #0f172a; page-break-after: avoid; }
+  h3 { font-size: 11pt; margin: 18px 0 6px; page-break-after: avoid; }
+  p { margin: 0 0 9px; }
+  .sheet { page-break-after: always; }
+  .sheet:last-child { page-break-after: auto; }
+  .sub { color: #475569; font-size: 11pt; margin: 0 0 18px; }
+  .lede { font-size: 11pt; }
+  code, .k { font-family: "DejaVu Sans Mono", ui-monospace, Consolas, monospace;
+             font-size: 9pt; background: #f1f5f9; padding: 1px 4px; border-radius: 3px; }
+  table { border-collapse: collapse; width: 100%; font-size: 9pt; margin: 4px 0 12px;
+          page-break-inside: avoid; }
+  th { text-align: left; background: #0f172a; color: #fff; padding: 5px 7px;
+       font-weight: 600; font-size: 8.5pt; }
+  td { padding: 5px 7px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+  tr:nth-child(even) td { background: #f8fafc; }
+  ol, ul { margin: 0 0 10px; padding-left: 20px; }
+  li { margin-bottom: 5px; }
+  figure { margin: 6px 0 16px; page-break-inside: avoid; }
+  figcaption { font-size: 8.5pt; color: #64748b; margin-top: 4px; }
+  svg { width: 100%; height: auto; display: block; }
+  .note { border-left: 3px solid #0f172a; background: #f8fafc;
+          padding: 8px 11px; margin: 10px 0 14px; font-size: 9.5pt; }
+  .warn { border-left-color: #e11d48; background: #fff1f2; }
+  .good { border-left-color: #16a34a; background: #f0fdf4; }
+  .legend { font-size: 8.5pt; color: #475569; margin: 0 0 12px; }
+  .legend span { display: inline-block; margin-right: 14px; }
+  .sw { display:inline-block; width:9px; height:9px; border:1.5px solid; margin-right:4px;
+        vertical-align: -1px; }
+  .cover { padding-top: 46mm; }
+  .meta { margin-top: 26mm; font-size: 9.5pt; color: #475569; }
+  .meta b { color: #0f172a; }
+  /* SVG classes */
+  .b  { fill:#fff; stroke:#94a3b8; stroke-width:1; }
+  .bg { fill:#f1f5f9; stroke:#94a3b8; stroke-width:1; }
+  .hi { fill:#fff1f2; stroke:#e11d48; stroke-width:1.6; }
+  .nw { fill:#eff6ff; stroke:#2563eb; stroke-width:1.6; }
+  .ok { fill:#f0fdf4; stroke:#16a34a; stroke-width:1.2; }
+  .t  { font: 11px "Segoe UI", sans-serif; fill:#0f172a; }
+  .tb { font: 700 11px "Segoe UI", sans-serif; fill:#0f172a; }
+  .m  { font: 10px "DejaVu Sans Mono", monospace; fill:#334155; }
+  .s  { font: 9.5px "Segoe UI", sans-serif; fill:#64748b; }
+  .ln { stroke:#64748b; stroke-width:1.3; fill:none; }
+  .ld { stroke:#94a3b8; stroke-width:1.2; fill:none; stroke-dasharray:4 3; }
+  .lr { stroke:#e11d48; stroke-width:1.3; fill:none; stroke-dasharray:4 3; }
+</style></head><body>
+
+<!-- ───────────────────────── COVER ───────────────────────── -->
+<section class="sheet cover">
+  <h1>PayLens — Two-Pipeline Plan</h1>
+  <p class="sub">Measurement and advisory, in one conversation.<br>
+  Current architecture, the gaps, and the build strategy.</p>
+
+  <p class="lede">PayLens answers payment questions where every number traces to a
+  validated, access-scoped, read-only query shown beside it. That works for
+  <i>&ldquo;success rate by issuer last week&rdquo;</i>. It is the wrong shape for
+  <i>&ldquo;how do I improve my success rate&rdquo;</i> — a question whose answer is a
+  judgement, not a number. This document covers both paths, how a question is routed
+  between them, and how they share one conversation.</p>
+
+  <div class="note"><b>The constraint that shapes every decision below.</b>
+  The model never computes. It picks an id from a closed set or writes prose that a
+  deterministic checker can reject; Python does the arithmetic. A plausible invented
+  benchmark — <i>&ldquo;most estates see 2–3% technical declines&rdquo;</i> — is the
+  most damaging output this tool can produce, so no new LLM call is added anywhere a
+  checker cannot reject its output.</div>
+
+  <div class="meta">
+    <b>Project</b> &nbsp; PayLens · Pine Labs — Enterprise AI Business Analyst<br>
+    <b>Repository</b> &nbsp; <code>Desktop/Pine&nbsp;Labs</code> · 10,531 lines Python ·
+       325 tests passing<br>
+    <b>Status</b> &nbsp; pipeline 1 built · pipeline 2 built and isolated · router,
+       mixed route and shared memory outstanding<br>
+    <b>Date</b> &nbsp; 21 November 2026
+  </div>
+</section>
+
+<!-- ───────────────────────── 1. WHAT EXISTS ───────────────────────── -->
+<section class="sheet">
+  <h2>1 · What exists today — three routes, not two</h2>
+
+  <p>A question already takes one of three paths, decided by a chain of deterministic
+  checks in <code>backend/core/pipeline.py</code>. Any design that assumes two paths
+  will break the routing, because the health scan is a third.</p>
+
+  <p class="legend">
+    <span><i class="sw" style="border-color:#94a3b8;background:#fff"></i>deterministic</span>
+    <span><i class="sw" style="border-color:#2563eb;background:#eff6ff"></i>new / proposed</span>
+    <span><i class="sw" style="border-color:#e11d48;background:#fff1f2"></i>gap or hard stop</span>
+    <span><i class="sw" style="border-color:#16a34a;background:#f0fdf4"></i>verified output</span>
+  </p>
+
+  <figure>
+  <svg viewBox="0 0 760 470" xmlns="http://www.w3.org/2000/svg" role="img"
+       aria-label="Routing order in pipeline.py">
+    <defs><marker id="m1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7"
+      markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"
+      fill="#64748b"/></marker></defs>
+    <g>
+      <rect class="bg" x="110" y="8"   width="240" height="32" rx="16"/>
+      <text class="tb" x="230" y="29" text-anchor="middle">a question arrives</text>
+
+      <rect class="b" x="110" y="58"  width="240" height="32" rx="5"/>
+      <text class="m" x="124" y="79">0 · destructive_intent()</text>
+      <rect class="hi" x="430" y="58" width="310" height="32" rx="5"/>
+      <text class="t" x="444" y="79">refused — PayLens is read-only</text>
+
+      <rect class="b" x="110" y="108" width="240" height="32" rx="5"/>
+      <text class="m" x="124" y="129">1 · resolve()  [no LLM]</text>
+      <text class="s" x="430" y="129">metric · dimensions · window · intent</text>
+
+      <rect class="b" x="110" y="158" width="240" height="32" rx="5"/>
+      <text class="m" x="124" y="179">1b · followup.apply()</text>
+      <text class="s" x="430" y="179">fills a gap from the previous turn, never overrides</text>
+
+      <rect class="b" x="110" y="208" width="240" height="32" rx="5"/>
+      <text class="m" x="124" y="229">1c · diagnostic_intent?</text>
+      <rect class="b" x="430" y="208" width="310" height="32" rx="5"/>
+      <text class="t" x="444" y="229">HEALTH SCAN — 7 declared checks</text>
+
+      <rect class="b" x="110" y="258" width="240" height="32" rx="5"/>
+      <text class="m" x="124" y="279">2 · RBAC scope pre-check</text>
+      <rect class="hi" x="430" y="258" width="310" height="32" rx="5"/>
+      <text class="t" x="444" y="279">refused — names the out-of-scope entity</text>
+
+      <rect class="b" x="110" y="308" width="240" height="32" rx="5"/>
+      <text class="m" x="124" y="329">2a · advisory.classify()</text>
+      <rect class="b" x="430" y="308" width="310" height="32" rx="5"/>
+      <text class="t" x="444" y="329">ADVISORY — 4 stages (section 3)</text>
+
+      <rect class="b" x="110" y="358" width="240" height="32" rx="5"/>
+      <text class="m" x="124" y="379">2b · clarify?</text>
+      <rect class="b" x="430" y="358" width="310" height="32" rx="5"/>
+      <text class="t" x="444" y="379">one question back, default pre-offered</text>
+
+      <rect class="b" x="110" y="408" width="240" height="32" rx="5"/>
+      <text class="m" x="124" y="429">3–17 · metric pipeline</text>
+      <rect class="ok" x="430" y="408" width="310" height="32" rx="5"/>
+      <text class="t" x="444" y="429">ANSWER CARD — number, SQL, caveats</text>
+
+      <path class="ln" marker-end="url(#m1)" d="M230,40 V54"/>
+      <path class="ln" marker-end="url(#m1)" d="M230,90 V104"/>
+      <path class="ln" marker-end="url(#m1)" d="M230,140 V154"/>
+      <path class="ln" marker-end="url(#m1)" d="M230,190 V204"/>
+      <path class="ln" marker-end="url(#m1)" d="M230,240 V254"/>
+      <path class="ln" marker-end="url(#m1)" d="M230,290 V304"/>
+      <path class="ln" marker-end="url(#m1)" d="M230,340 V354"/>
+      <path class="ln" marker-end="url(#m1)" d="M230,390 V404"/>
+      <path class="ln" marker-end="url(#m1)" d="M350,74  H424"/>
+      <path class="ln" marker-end="url(#m1)" d="M350,224 H424"/>
+      <path class="ln" marker-end="url(#m1)" d="M350,274 H424"/>
+      <path class="ln" marker-end="url(#m1)" d="M350,324 H424"/>
+      <path class="ln" marker-end="url(#m1)" d="M350,374 H424"/>
+      <path class="ln" marker-end="url(#m1)" d="M350,424 H424"/>
+    </g>
+  </svg>
+  <figcaption>Fig 1 — The order is load-bearing. The scope pre-check sits
+  <i>above</i> the advisory branch, so an advisory answer can never become a side
+  channel around row-level security.</figcaption>
+  </figure>
+
+  <h3>Why the order cannot be rearranged</h3>
+  <table>
+    <tr><th style="width:30%">Placement</th><th>What it prevents</th></tr>
+    <tr><td>Destructive check first</td><td>A user asking to mutate data gets a
+      read-only answer, not an analytics result about a keyword in their sentence.</td></tr>
+    <tr><td>Scope check before any cache</td><td>A cache hit cannot serve rows the
+      principal is not entitled to.</td></tr>
+    <tr><td>Scope check before advisory</td><td>Every number in an advisory answer is
+      measured under the asker's own row scope.</td></tr>
+    <tr><td>Advisory before clarify</td><td>An open question gets investigated rather
+      than answered with a metric picker.</td></tr>
+  </table>
+</section>
+
+<!-- ───────────────────────── 2. PIPELINE A ───────────────────────── -->
+<section class="sheet">
+  <h2>2 · Pipeline A — measurement</h2>
+  <p>The answer <i>is</i> the number. Substance comes from SQL, and a wrong answer is
+  falsifiable by a query. Fifteen stages run after routing; the model appears in
+  exactly three of them and never computes a value.</p>
+
+  <figure>
+  <svg viewBox="0 0 760 420" xmlns="http://www.w3.org/2000/svg" role="img"
+       aria-label="The fifteen stages of the measurement pipeline">
+    <defs><marker id="m2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7"
+      markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"
+      fill="#64748b"/></marker>
+      <marker id="m2r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7"
+      markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"
+      fill="#94a3b8"/></marker></defs>
+
+    <text class="tb" x="55"  y="24">3 → 10 · from question to rows</text>
+    <text class="tb" x="430" y="24">11 → 17 · from rows to the card</text>
+    <path class="ln" marker-end="url(#m2)" d="M352,19 H424"/>
+
+    <rect class="b"  x="55" y="46"  width="290" height="30" rx="5"/><text class="m" x="67" y="66">3 · L0 cache — question hash</text>
+    <rect class="b"  x="55" y="88"  width="290" height="30" rx="5"/><text class="m" x="67" y="108">4 · freshness trim</text>
+    <rect class="b"  x="55" y="130" width="290" height="30" rx="5"/><text class="m" x="67" y="150">5 · KB probe — tier 1 / 2 / 3</text>
+    <rect class="b"  x="55" y="172" width="290" height="30" rx="5"/><text class="m" x="67" y="192">6 · plan — cache &#8594; rules &#8594; LLM</text>
+    <rect class="b"  x="55" y="214" width="290" height="30" rx="5"/><text class="m" x="67" y="234">7 · compile — plan &#8594; SQL template</text>
+    <rect class="hi" x="55" y="256" width="290" height="30" rx="5"/><text class="tb" x="67" y="276">8 · GUARD — 9 checks, fails closed</text>
+    <rect class="b"  x="55" y="298" width="290" height="30" rx="5"/><text class="m" x="67" y="318">9 · L2 cache — post-RBAC SQL</text>
+    <rect class="b"  x="55" y="340" width="290" height="30" rx="5"/><text class="m" x="67" y="360">10 · execute + self-heal</text>
+
+    <rect class="b"  x="430" y="46"  width="290" height="30" rx="5"/><text class="m" x="442" y="66">11 · row cap — block or truncate</text>
+    <rect class="b"  x="430" y="88"  width="290" height="30" rx="5"/><text class="m" x="442" y="108">12 · data-quality caveats</text>
+    <rect class="b"  x="430" y="130" width="290" height="30" rx="5"/><text class="m" x="442" y="150">13 · drivers — mix vs rate [no LLM]</text>
+    <rect class="b"  x="430" y="172" width="290" height="30" rx="5"/><text class="m" x="442" y="192">14 · chart — LLM proposes, rules check</text>
+    <rect class="b"  x="430" y="214" width="290" height="30" rx="5"/><text class="m" x="442" y="234">15 · actions — catalogue + owner</text>
+    <rect class="b"  x="430" y="256" width="290" height="30" rx="5"/><text class="m" x="442" y="276">16 · narrate — [1 LLM call]</text>
+    <rect class="ok" x="430" y="298" width="290" height="30" rx="5"/><text class="m" x="442" y="318">17 · confidence — arithmetic</text>
+
+    <path class="ln" marker-end="url(#m2)" d="M200,76  V84"/>
+    <path class="ln" marker-end="url(#m2)" d="M200,118 V126"/>
+    <path class="ln" marker-end="url(#m2)" d="M200,160 V168"/>
+    <path class="ln" marker-end="url(#m2)" d="M200,202 V210"/>
+    <path class="ln" marker-end="url(#m2)" d="M200,244 V252"/>
+    <path class="ln" marker-end="url(#m2)" d="M200,286 V294"/>
+    <path class="ln" marker-end="url(#m2)" d="M200,328 V336"/>
+    <path class="ln" marker-end="url(#m2)" d="M575,76  V84"/>
+    <path class="ln" marker-end="url(#m2)" d="M575,118 V126"/>
+    <path class="ln" marker-end="url(#m2)" d="M575,160 V168"/>
+    <path class="ln" marker-end="url(#m2)" d="M575,202 V210"/>
+    <path class="ln" marker-end="url(#m2)" d="M575,244 V252"/>
+    <path class="ln" marker-end="url(#m2)" d="M575,286 V294"/>
+
+    <path class="ld" marker-end="url(#m2r)" d="M55,355 H26 V271 H51"/>
+    <text class="s" transform="rotate(-90 18 320)" x="18" y="320">every heal re-enters the guard</text>
+    <text class="s" x="355" y="372">on an aggregate over the cap:</text>
+    <text class="s" x="355" y="386">blocked, not truncated — truncation</text>
+    <text class="s" x="355" y="400">breaks &#931;w = 1 in the decomposition</text>
+  </svg>
+  <figcaption>Fig 2 — The healing loop operates on the pre-RBAC template and every
+  candidate re-enters the guard, so a &ldquo;repair&rdquo; cannot delete the access
+  predicate.</figcaption>
+  </figure>
+
+  <h3>The guard — nine checks on the parse tree, not the string</h3>
+  <figure>
+  <svg viewBox="0 0 760 420" xmlns="http://www.w3.org/2000/svg" role="img"
+       aria-label="The nine guard checks">
+    <defs><marker id="m3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7"
+      markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"
+      fill="#e11d48"/></marker></defs>
+    <rect class="b"  x="215" y="14"  width="400" height="28" rx="4"/><text class="m" x="227" y="33">1 · exactly one statement</text>
+    <rect class="b"  x="215" y="56"  width="400" height="28" rx="4"/><text class="m" x="227" y="75">2 · SELECT-only</text>
+    <rect class="b"  x="215" y="98"  width="400" height="28" rx="4"/><text class="m" x="227" y="117">3 · no injection / denied functions</text>
+    <rect class="b"  x="215" y="140" width="400" height="28" rx="4"/><text class="m" x="227" y="159">4 · table allowlist</text>
+    <rect class="b"  x="215" y="182" width="400" height="28" rx="4"/><text class="m" x="227" y="201">5 · column allowlist + role masking</text>
+    <rect class="hi" x="215" y="224" width="400" height="28" rx="4"/><text class="tb" x="227" y="243">6 · RBAC predicate injected into the AST</text>
+    <rect class="b"  x="215" y="266" width="400" height="28" rx="4"/><text class="m" x="227" y="285">7 · sentinel LIMIT n+1</text>
+    <rect class="b"  x="215" y="308" width="400" height="28" rx="4"/><text class="m" x="227" y="327">8 · EXPLAIN cost + timeout</text>
+    <rect class="hi" x="215" y="350" width="400" height="28" rx="4"/><text class="tb" x="227" y="369">9 · re-walk: predicate survived as a conjunct</text>
+
+    <path class="lr" d="M190,28 V364"/>
+    <path class="lr" d="M215,28  H190"/><path class="lr" d="M215,70  H190"/>
+    <path class="lr" d="M215,112 H190"/><path class="lr" d="M215,154 H190"/>
+    <path class="lr" d="M215,196 H190"/><path class="lr" d="M215,238 H190"/>
+    <path class="lr" d="M215,280 H190"/><path class="lr" d="M215,322 H190"/>
+    <path class="lr" d="M215,364 H190"/>
+    <path class="lr" marker-end="url(#m3)" d="M190,196 H140"/>
+    <rect class="hi" x="14" y="178" width="124" height="36" rx="5"/>
+    <text class="tb" x="76" y="201" text-anchor="middle">BLOCKED</text>
+    <text class="s"  x="76" y="230" text-anchor="middle">any failed check,</text>
+    <text class="s"  x="76" y="244" text-anchor="middle">nothing bypasses</text>
+
+    <text class="s" x="630" y="236">regex filtering is</text>
+    <text class="s" x="630" y="250">defeated by /*x*/DROP</text>
+    <text class="s" x="630" y="362">check 6 can be satisfied</text>
+    <text class="s" x="630" y="376">by a predicate an OR 1=1</text>
+    <text class="s" x="630" y="390">has neutralised</text>
+  </svg>
+  <figcaption>Fig 3 — Check 9 exists because a self-heal is capable of producing SQL
+  that passes check 6 and still leaks.</figcaption>
+  </figure>
+</section>
+
+<!-- ───────────────────────── 3. PIPELINE B ───────────────────────── -->
+<section class="sheet">
+  <h2>3 · Pipeline B — advisory (built, and isolated)</h2>
+  <p><code>backend/core/advisory.py</code>, 754 lines. The answer is a judgement:
+  what to do, what a term means, whether a figure is good, what would happen.
+  Substance comes from a declared catalogue plus facts measured from this estate.
+  SQL is the <i>evidence</i>, not the answer.</p>
+
+  <figure>
+  <svg viewBox="0 0 760 420" xmlns="http://www.w3.org/2000/svg" role="img"
+       aria-label="The four advisory stages">
+    <defs><marker id="m4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7"
+      markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"
+      fill="#64748b"/></marker>
+      <marker id="m4d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7"
+      markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"
+      fill="#94a3b8"/></marker></defs>
+
+    <rect class="bg" x="200" y="8"   width="330" height="32" rx="16"/>
+    <text class="tb" x="365" y="29" text-anchor="middle">&ldquo;how do I improve my success rate?&rdquo;</text>
+
+    <rect class="b"  x="200" y="64"  width="330" height="40" rx="5"/>
+    <text class="tb" x="214" y="80">1 · CLASSIFY</text>
+    <text class="s"  x="214" y="96">deterministic phrase match &#8594; kind + catalogue ids</text>
+    <rect class="hi" x="560" y="64"  width="186" height="40" rx="5"/>
+    <text class="s"  x="572" y="80">no match &#8594; metric picker</text>
+    <text class="s"  x="572" y="96">(the gap, section 4)</text>
+
+    <rect class="b"  x="200" y="134" width="330" height="40" rx="5"/>
+    <text class="tb" x="214" y="150">2 · GROUND</text>
+    <text class="s"  x="214" y="166">10 declared probes &#8594; guarded SQL</text>
+    <rect class="ok" x="560" y="134" width="186" height="40" rx="5"/>
+    <text class="s"  x="572" y="150">evidence pack</text>
+    <text class="m"  x="572" y="167">E1 &#8230; En</text>
+
+    <rect class="nw" x="200" y="204" width="330" height="40" rx="5"/>
+    <text class="tb" x="214" y="220">3 · COMPOSE &#8212; one LLM call</text>
+    <text class="s"  x="214" y="236">may use only the levers and the E-facts</text>
+
+    <rect class="b"  x="200" y="274" width="330" height="40" rx="5"/>
+    <text class="tb" x="214" y="290">4 · VERIFY</text>
+    <text class="s"  x="214" y="306">every number in the pack · every [E] resolves</text>
+
+    <rect class="ok" x="90"  y="350" width="250" height="40" rx="5"/>
+    <text class="tb" x="215" y="368" text-anchor="middle">grounded</text>
+    <text class="s"  x="215" y="383" text-anchor="middle">serve the composed prose</text>
+    <rect class="bg" x="390" y="350" width="250" height="40" rx="5"/>
+    <text class="tb" x="515" y="368" text-anchor="middle">rejected</text>
+    <text class="s"  x="515" y="383" text-anchor="middle">serve the catalogue answer</text>
+
+    <path class="ln" marker-end="url(#m4)" d="M365,40  V60"/>
+    <path class="ln" marker-end="url(#m4)" d="M365,104 V130"/>
+    <path class="ln" marker-end="url(#m4)" d="M365,174 V200"/>
+    <path class="ln" marker-end="url(#m4)" d="M365,244 V270"/>
+    <path class="ln" marker-end="url(#m4)" d="M330,314 L240,346"/>
+    <path class="ln" marker-end="url(#m4)" d="M400,314 L490,346"/>
+    <path class="ld" marker-end="url(#m4d)" d="M530,84  H556"/>
+    <path class="ld" marker-end="url(#m4d)" d="M530,154 H556"/>
+
+    <rect class="b" x="14" y="134" width="150" height="56" rx="5"/>
+    <text class="s" x="26" y="152">the same 9-check</text>
+    <text class="s" x="26" y="166">guard, the same row</text>
+    <text class="s" x="26" y="180">scope, this principal</text>
+    <path class="ld" marker-end="url(#m4d)" d="M164,160 H196"/>
+  </svg>
+  <figcaption>Fig 4 — A single ungrounded number discards the <i>whole</i>
+  composition, because a reader cannot tell which sentence was the invented one.</figcaption>
+  </figure>
+
+  <h3>The catalogue — <code>semantic/playbooks.yaml</code>, 487 lines</h3>
+  <table>
+    <tr><th style="width:22%">Contents</th><th>Why it is YAML and not a prompt</th></tr>
+    <tr><td>10 glossary entries</td><td>Written against <i>this dataset's</i>
+      vocabulary, so a definition and a breakdown of the same concept can never
+      disagree.</td></tr>
+    <tr><td>9 playbooks</td><td>Each carries a framing, its limits, and the probes
+      that ground it.</td></tr>
+    <tr><td>29 levers</td><td>Each has an <b>owner</b> and a PayLens question that
+      <b>checks</b> it. Advice with no owner never gets actioned; advice with no
+      measurement never gets verified.</td></tr>
+    <tr><td>10 probes</td><td>Declared SQL, not model-written. A probe that errors is
+      dropped; the answer survives with four facts instead of five.</td></tr>
+  </table>
+  <div class="good"><b>The property worth protecting.</b> A payments person can review
+  and edit this file without reading a line of Python. Every proposal in section 6
+  preserves that.</div>
+</section>
+
+<!-- ───────────────────────── 4. GAPS ───────────────────────── -->
+<section class="sheet">
+  <h2>4 · The gaps — where the two pipelines fail to meet</h2>
+  <p>Both pipelines work. Nothing about <i>how they meet</i> does.</p>
+  <table>
+    <tr><th style="width:26%">Gap</th><th style="width:26%">Where</th><th>Consequence</th></tr>
+    <tr><td>Router is 20 first-match-wins regexes plus two vetoes</td>
+        <td><code>advisory.py:107–230</code></td>
+        <td>Brittle, and a question containing both halves silently loses one.</td></tr>
+    <tr><td><b>Zero</b> conversation integration</td>
+        <td>nothing in <code>conversations.py</code> / <code>followup.py</code></td>
+        <td>&ldquo;why did UPI drop last week&rdquo; &#8594; &ldquo;how do I fix
+        it&rdquo; advises on a default 30-day window, not last week.</td></tr>
+    <tr><td>No catalogue match &#8594; empty classification</td>
+        <td><code>classify()</code> return</td>
+        <td>Falls through to a metric picker — the exact failure the file's own
+        docstring says it exists to kill.</td></tr>
+    <tr><td>One LLM call, no repair</td>
+        <td><code>_compose_llm</code></td>
+        <td>A rejection throws away an answer that may have had one bad figure in it.</td></tr>
+    <tr><td><code>"advise"</code> absent from the budget table</td>
+        <td><code>provider.py:44–50</code></td>
+        <td>Silently capped at the default of 1; adding calls needs this fixed first.</td></tr>
+    <tr><td>Levers emitted in catalogue order</td>
+        <td><code>advise()</code></td>
+        <td>The evidence pack is measured and then ignored when ranking advice.</td></tr>
+  </table>
+
+  <h3>The discriminator — one test, not a phrase list</h3>
+  <p>Do not separate the pipelines by how a question is worded. Separate them by what
+  the answer's substance is, and decide with a single question:
+  <b>can a wrong answer be falsified by a query?</b></p>
+  <table>
+    <tr><th style="width:17%">Route</th><th style="width:17%">Substance</th>
+        <th style="width:16%">Falsifiable?</th><th>Example</th></tr>
+    <tr><td><b>A · measure</b></td><td>SQL</td><td>yes</td>
+        <td>success rate by issuer last week · GMV by method in October</td></tr>
+    <tr><td><b>B · advise</b></td><td>catalogue + measured facts</td><td>no</td>
+        <td>how do I improve success rate · should I retry · is 86% good</td></tr>
+    <tr><td><b>C · diagnose</b></td><td>7 declared checks</td><td>yes, per finding</td>
+        <td>what problems does my system have</td></tr>
+    <tr><td><b>D · mixed</b> <span class="k">new</span></td><td>both</td><td>in part</td>
+        <td>why did success rate drop <i>and how do I fix it</i></td></tr>
+  </table>
+  <p>Pipeline B's sub-kinds already implemented: <code>definition</code>,
+  <code>benchmark</code>, <code>recommendation</code>, <code>hypothetical</code>.
+  Two to add: <b>procedure</b> (a runbook — how do I actually do this) and
+  <b>sizing</b> (what is this worth in rupees).</p>
+</section>
+
+<!-- ───────────────────────── 5. TARGET ───────────────────────── -->
+<section class="sheet">
+  <h2>5 · Target architecture — the router</h2>
+  <p>Three tiers. Deterministic rules decide what they can; a model is consulted only
+  when the rules are <i>undecided</i>, and then it returns a label from a closed set
+  and nothing else. Python decides what the label means — the same discipline that
+  lets the planner pick a metric id.</p>
+
+  <figure>
+  <svg viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg" role="img"
+       aria-label="The three-tier router">
+    <defs><marker id="m5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7"
+      markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"
+      fill="#64748b"/></marker></defs>
+
+    <rect class="bg" x="12"  y="118" width="120" height="36" rx="18"/>
+    <text class="tb" x="72"  y="141" text-anchor="middle">question</text>
+
+    <rect class="b"  x="168" y="112" width="190" height="48" rx="5"/>
+    <text class="tb" x="182" y="130">tier 1 · rules</text>
+    <text class="s"  x="182" y="148">phrase + period + breakdown</text>
+
+    <rect class="nw" x="168" y="198" width="190" height="48" rx="5"/>
+    <text class="tb" x="182" y="216">tier 2 · one LLM call</text>
+    <text class="s"  x="182" y="234">returns a label, never prose</text>
+
+    <rect class="b"  x="398" y="112" width="104" height="48" rx="5"/>
+    <text class="tb" x="450" y="134" text-anchor="middle">ROUTE</text>
+    <text class="s"  x="450" y="150" text-anchor="middle">+ logged reason</text>
+
+    <rect class="b"  x="562" y="18"  width="184" height="30" rx="5"/><text class="m" x="574" y="38">A · measure</text>
+    <rect class="b"  x="562" y="62"  width="184" height="30" rx="5"/><text class="m" x="574" y="82">B · advise</text>
+    <rect class="b"  x="562" y="106" width="184" height="30" rx="5"/><text class="m" x="574" y="126">C · diagnose</text>
+    <rect class="nw" x="562" y="150" width="184" height="30" rx="5"/><text class="m" x="574" y="170">D · mixed</text>
+    <rect class="b"  x="562" y="194" width="184" height="30" rx="5"/><text class="m" x="574" y="214">E · clarify</text>
+
+    <path class="ln" marker-end="url(#m5)" d="M132,136 H164"/>
+    <path class="ln" marker-end="url(#m5)" d="M358,136 H394"/>
+    <path class="ln" marker-end="url(#m5)" d="M263,160 V194"/>
+    <text class="s"  x="270" y="182">undecided</text>
+    <path class="ln" marker-end="url(#m5)" d="M358,222 H450 V164"/>
+    <path class="ln" marker-end="url(#m5)" d="M502,136 H534 V33  H558"/>
+    <path class="ln" marker-end="url(#m5)" d="M534,136 V77  H558"/>
+    <path class="ln" marker-end="url(#m5)" d="M534,121 H558"/>
+    <path class="ln" marker-end="url(#m5)" d="M534,136 V165 H558"/>
+    <path class="ln" marker-end="url(#m5)" d="M534,136 V209 H558"/>
+    <text class="s"  x="398" y="262">rejection check: the label must be in the set,</text>
+    <text class="s"  x="398" y="276">and every catalogue id it names must exist</text>
+  </svg>
+  <figcaption>Fig 5 — Tier 2 costs one call and only fires on the undecided path, so
+  the common case stays deterministic and free.</figcaption>
+  </figure>
+
+  <h3>The mixed route — one question with two halves</h3>
+  <figure>
+  <svg viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" role="img"
+       aria-label="The mixed route">
+    <defs><marker id="m6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7"
+      markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"
+      fill="#64748b"/></marker></defs>
+
+    <rect class="bg" x="230" y="6"   width="300" height="30" rx="15"/>
+    <text class="tb" x="380" y="26"  text-anchor="middle">&ldquo;why did it drop, and how do I fix it?&rdquo;</text>
+
+    <rect class="b"  x="40"  y="66"  width="300" height="34" rx="5"/>
+    <text class="tb" x="54"  y="80">A half</text><text class="s" x="54" y="94">metric pipeline, stages 3&#8211;13</text>
+    <rect class="b"  x="420" y="66"  width="300" height="34" rx="5"/>
+    <text class="tb" x="434" y="80">B half</text><text class="s" x="434" y="94">classify &#8594; declared probes</text>
+
+    <rect class="ok" x="40"  y="124" width="300" height="34" rx="5"/>
+    <text class="s"  x="54"  y="146">result rows + mix/rate decomposition</text>
+    <rect class="ok" x="420" y="124" width="300" height="34" rx="5"/>
+    <text class="s"  x="434" y="146">evidence pack E1 &#8230; En</text>
+
+    <rect class="nw" x="200" y="186" width="360" height="34" rx="5"/>
+    <text class="tb" x="380" y="208" text-anchor="middle">one evidence pack &#8212; the A rows become E-facts</text>
+
+    <rect class="nw" x="200" y="240" width="360" height="34" rx="5"/>
+    <text class="tb" x="380" y="262" text-anchor="middle">rank the levers against that pack [1 LLM call]</text>
+
+    <rect class="b"  x="200" y="294" width="360" height="30" rx="5"/>
+    <text class="tb" x="380" y="314" text-anchor="middle">compose &#8594; verify &#8594; one answer</text>
+
+    <path class="ln" marker-end="url(#m6)" d="M330,36 L250,62"/>
+    <path class="ln" marker-end="url(#m6)" d="M430,36 L510,62"/>
+    <path class="ln" marker-end="url(#m6)" d="M190,100 V120"/>
+    <path class="ln" marker-end="url(#m6)" d="M570,100 V120"/>
+    <path class="ln" marker-end="url(#m6)" d="M190,158 V172 H300 V182"/>
+    <path class="ln" marker-end="url(#m6)" d="M570,158 V172 H460 V182"/>
+    <path class="ln" marker-end="url(#m6)" d="M380,220 V236"/>
+    <path class="ln" marker-end="url(#m6)" d="M380,274 V290"/>
+  </svg>
+  <figcaption>Fig 6 — Dropping half a compound question is the same class of defect as
+  the <code>priya</code> bug: the system answers something adjacent, confidently.</figcaption>
+  </figure>
+</section>
+
+<!-- ───────────────────────── 6. CONVERSATION ───────────────────────── -->
+<section class="sheet">
+  <h2>6 · One conversation across both pipelines</h2>
+  <p>Currently at zero. Carry-over must be written as explicit rules, the way
+  <code>followup.py</code> already has five, and every inherited field must be shown
+  on the answer — an assumption the user cannot see is one they cannot correct.</p>
+
+  <figure>
+  <svg viewBox="0 0 760 290" xmlns="http://www.w3.org/2000/svg" role="img"
+       aria-label="Carry-over between measurement and advisory turns">
+    <defs><marker id="m7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7"
+      markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"
+      fill="#64748b"/></marker></defs>
+
+    <rect class="b"  x="80"  y="104" width="190" height="56" rx="6"/>
+    <text class="tb" x="175" y="128" text-anchor="middle">MEASURE turn</text>
+    <text class="s"  x="175" y="146" text-anchor="middle">metric · window · filters</text>
+
+    <rect class="b"  x="490" y="104" width="190" height="56" rx="6"/>
+    <text class="tb" x="585" y="128" text-anchor="middle">ADVISE turn</text>
+    <text class="s"  x="585" y="146" text-anchor="middle">kind · catalogue ids · levers</text>
+
+    <path class="ln" marker-end="url(#m7)" d="M270,118 C340,60 420,60 486,118"/>
+    <text class="tb" x="378" y="72"  text-anchor="middle">window + filters + segment</text>
+    <text class="s"  x="378" y="88"  text-anchor="middle">so &ldquo;how do I fix that&rdquo; grounds on the slice just viewed</text>
+
+    <path class="ln" marker-end="url(#m7)" d="M490,148 C420,206 340,206 274,148"/>
+    <text class="tb" x="378" y="196" text-anchor="middle">the lever's own measure question</text>
+    <text class="s"  x="378" y="212" text-anchor="middle">so &ldquo;check the first one&rdquo; resolves</text>
+
+    <path class="ln" marker-end="url(#m7)" d="M110,104 C70,60 240,56 230,100"/>
+    <text class="s"  x="106" y="46">existing 5 rules</text>
+    <path class="ln" marker-end="url(#m7)" d="M650,104 C690,60 520,56 530,100"/>
+    <text class="s"  x="560" y="46">window + ids, not kind</text>
+
+    <rect class="hi" x="190" y="238" width="380" height="36" rx="5"/>
+    <text class="tb" x="380" y="261" text-anchor="middle">nothing carries across a refusal, a clarification, or a role change</text>
+  </svg>
+  <figcaption>Fig 7 — Four transitions, one barrier. Refusals are still
+  <i>stored</i>: a history containing only the questions that worked lies about what
+  you did.</figcaption>
+  </figure>
+
+  <h3>The four rules, stated</h3>
+  <ol>
+    <li><b>measure &#8594; advise.</b> Inherit the window, the filters and the
+      segment from the previous answered turn. Today the advisory path always calls
+      <code>_scan_window</code> and so answers about the wrong period.</li>
+    <li><b>advise &#8594; measure.</b> Each lever's <code>measure</code> question
+      becomes resolvable context, so an ordinal reference works.</li>
+    <li><b>advise &#8594; advise.</b> Window and catalogue ids carry; the
+      <code>kind</code> does not.</li>
+    <li><b>Inheritance only ever fills a gap.</b> A question that stands on its own is
+      answered exactly as typed.</li>
+  </ol>
+</section>
+
+<!-- ───────────────────────── 7. LLM CALLS ───────────────────────── -->
+<section class="sheet">
+  <h2>7 · More LLM calls — and the rule that earns them</h2>
+  <div class="note"><b>Add a call only where a deterministic checker can reject its
+  output.</b> This is what separates an LLM call from a liability. Six slots qualify;
+  three exist, three are new. One of the new ones is the auto-healing call.</div>
+
+  <figure>
+  <svg viewBox="0 0 760 430" xmlns="http://www.w3.org/2000/svg" role="img"
+       aria-label="Every LLM call, its rejection check and its fallback">
+    <defs><marker id="m8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7"
+      markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"
+      fill="#64748b"/></marker></defs>
+    <text class="tb" x="24"  y="18">the call</text>
+    <text class="tb" x="292" y="18">what can reject it</text>
+    <text class="tb" x="556" y="18">if it fails or is rejected</text>
+    <path class="ld" d="M14,26 H746"/>
+
+    <rect class="nw" x="24"  y="36"  width="240" height="38" rx="4"/><text class="m" x="36" y="54">route</text><text class="s" x="36" y="68">tier 2 only · NEW</text>
+    <rect class="b"  x="292" y="36"  width="240" height="38" rx="4"/><text class="s" x="304" y="60">label is in the closed set</text>
+    <rect class="bg" x="556" y="36"  width="190" height="38" rx="4"/><text class="s" x="568" y="60">the tier-1 rules</text>
+
+    <rect class="nw" x="24"  y="86"  width="240" height="38" rx="4"/><text class="m" x="36" y="104">rank levers</text><text class="s" x="36" y="118">highest value · NEW</text>
+    <rect class="b"  x="292" y="86"  width="240" height="38" rx="4"/><text class="s" x="304" y="110">a permutation of the given ids</text>
+    <rect class="bg" x="556" y="86"  width="190" height="38" rx="4"/><text class="s" x="568" y="110">catalogue order</text>
+
+    <rect class="nw" x="24"  y="136" width="240" height="38" rx="4"/><text class="m" x="36" y="154">select probes</text><text class="s" x="36" y="168">widens coverage · NEW</text>
+    <rect class="b"  x="292" y="136" width="240" height="38" rx="4"/><text class="s" x="304" y="160">ids exist in PROBES</text>
+    <rect class="bg" x="556" y="136" width="190" height="38" rx="4"/><text class="s" x="568" y="160">the declared probe set</text>
+
+    <rect class="b"  x="24"  y="186" width="240" height="38" rx="4"/><text class="m" x="36" y="204">plan</text><text class="s" x="36" y="218">exists</text>
+    <rect class="b"  x="292" y="186" width="240" height="38" rx="4"/><text class="s" x="304" y="210">the compiled plan meets the guard</text>
+    <rect class="bg" x="556" y="186" width="190" height="38" rx="4"/><text class="s" x="568" y="210">deterministic resolver</text>
+
+    <rect class="b"  x="24"  y="236" width="240" height="38" rx="4"/><text class="m" x="36" y="254">compose</text><text class="s" x="36" y="268">exists</text>
+    <rect class="b"  x="292" y="236" width="240" height="38" rx="4"/><text class="s" x="304" y="260">verify(): every number in the pack</text>
+    <rect class="nw" x="556" y="236" width="190" height="38" rx="4"/><text class="s" x="568" y="260">repair, then catalogue</text>
+
+    <rect class="nw" x="24"  y="286" width="240" height="38" rx="4"/><text class="m" x="36" y="304">repair</text><text class="s" x="36" y="318">the auto-heal · NEW</text>
+    <rect class="b"  x="292" y="286" width="240" height="38" rx="4"/><text class="s" x="304" y="304">re-run verify(), unchanged</text><text class="s" x="304" y="318">max one retry</text>
+    <rect class="bg" x="556" y="286" width="190" height="38" rx="4"/><text class="s" x="568" y="310">catalogue prose</text>
+
+    <rect class="b"  x="24"  y="336" width="240" height="38" rx="4"/><text class="m" x="36" y="354">narrate</text><text class="s" x="36" y="368">exists</text>
+    <rect class="b"  x="292" y="336" width="240" height="38" rx="4"/><text class="s" x="304" y="360">receives only computed numbers</text>
+    <rect class="bg" x="556" y="336" width="190" height="38" rx="4"/><text class="s" x="568" y="360">template narration</text>
+
+    <path class="ln" marker-end="url(#m8)" d="M264,55  H288"/>
+    <path class="ln" marker-end="url(#m8)" d="M264,105 H288"/>
+    <path class="ln" marker-end="url(#m8)" d="M264,155 H288"/>
+    <path class="ln" marker-end="url(#m8)" d="M264,205 H288"/>
+    <path class="ln" marker-end="url(#m8)" d="M264,255 H288"/>
+    <path class="ln" marker-end="url(#m8)" d="M264,305 H288"/>
+    <path class="ln" marker-end="url(#m8)" d="M264,355 H288"/>
+    <path class="ln" marker-end="url(#m8)" d="M532,55  H552"/>
+    <path class="ln" marker-end="url(#m8)" d="M532,105 H552"/>
+    <path class="ln" marker-end="url(#m8)" d="M532,155 H552"/>
+    <path class="ln" marker-end="url(#m8)" d="M532,205 H552"/>
+    <path class="ln" marker-end="url(#m8)" d="M532,255 H552"/>
+    <path class="ln" marker-end="url(#m8)" d="M532,305 H552"/>
+    <path class="ln" marker-end="url(#m8)" d="M532,355 H552"/>
+    <path class="ld" marker-end="url(#m8)" d="M651,274 V282"/>
+    <path class="ld" marker-end="url(#m8)" d="M412,324 V332"/>
+    <text class="s" x="14" y="404">Budget: add route · rank · advise · repair to CallBudget.limits. &ldquo;advise&rdquo; is</text>
+    <text class="s" x="14" y="418">missing from that table today and therefore silently capped at the default of 1.</text>
+  </svg>
+  <figcaption>Fig 8 — The repair call mirrors <code>healing.py</code> exactly: it is
+  handed the specific ungrounded literals, it operates on the pre-check artifact, it
+  re-enters the <i>same</i> checker, and the check is never widened to accommodate
+  it.</figcaption>
+  </figure>
+
+  <div class="warn"><b>Latency is the real cap, not correctness.</b> On the current
+  free-tier model each call costs roughly 11 seconds. Four extra calls on the advisory
+  path is ~40s worst case. That number &mdash; not safety &mdash; decides how many of
+  these slots get filled.</div>
+</section>
+
+<!-- ───────────────────────── 8. KNOWLEDGE ───────────────────────── -->
+<section class="sheet">
+  <h2>8 · External knowledge — curated, not crawled</h2>
+  <p>&ldquo;Auto-fetch business manuals and feed them in&rdquo; is right about the
+  problem and dangerous as stated: a scraped payments corpus is full of industry
+  benchmarks, which is precisely the output this tool must never produce. The
+  invariant that makes ingestion safe:</p>
+  <div class="note"><b>External knowledge may supply levers, definitions, procedures
+  and causal mechanisms. It may never supply a number about this estate, and never an
+  industry benchmark presented as fact.</b></div>
+
+  <figure>
+  <svg viewBox="0 0 760 400" xmlns="http://www.w3.org/2000/svg" role="img"
+       aria-label="Knowledge ingestion with a human review gate">
+    <defs><marker id="m9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7"
+      markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"
+      fill="#64748b"/></marker></defs>
+
+    <rect class="ok" x="14"  y="20"  width="180" height="38" rx="4"/>
+    <text class="tb" x="26"  y="38">tier 1 · regulator</text><text class="s" x="26" y="52">NPCI · RBI · scheme rules</text>
+    <rect class="b"  x="14"  y="70"  width="180" height="38" rx="4"/>
+    <text class="tb" x="26"  y="88">tier 2 · vendor docs</text><text class="s" x="26" y="102">mechanism only, no figures</text>
+    <rect class="hi" x="14"  y="120" width="180" height="38" rx="4"/>
+    <text class="tb" x="26"  y="138">tier 3 · blogs</text><text class="s" x="26" y="152">ingested, never citable</text>
+
+    <rect class="b"  x="250" y="70"  width="200" height="38" rx="4"/>
+    <text class="s"  x="262" y="86">fetch &#8212; fixed URL allowlist</text><text class="s" x="262" y="100">+ publisher, url, retrieved_on</text>
+    <rect class="b"  x="250" y="128" width="200" height="34" rx="4"/>
+    <text class="s"  x="262" y="150">chunk + deduplicate</text>
+    <rect class="nw" x="250" y="182" width="200" height="38" rx="4"/>
+    <text class="tb" x="262" y="200">draft candidates [LLM]</text><text class="s" x="262" y="214">offline, unlimited calls</text>
+    <rect class="b"  x="250" y="240" width="200" height="34" rx="4"/>
+    <text class="m"  x="262" y="262">candidates.yaml</text>
+    <rect class="hi" x="250" y="294" width="200" height="44" rx="4"/>
+    <text class="tb" x="350" y="312" text-anchor="middle">HUMAN REVIEW GATE</text>
+    <text class="s"  x="350" y="328" text-anchor="middle">nothing reaches runtime unmerged</text>
+
+    <rect class="ok" x="510" y="294" width="236" height="44" rx="4"/>
+    <text class="m"  x="522" y="312">semantic/playbooks.yaml</text>
+    <text class="s"  x="522" y="328">reviewable without reading Python</text>
+    <rect class="b"  x="510" y="182" width="236" height="38" rx="4"/>
+    <text class="s"  x="522" y="200">runtime compose may cite [K3]</text>
+    <text class="s"  x="522" y="214">as framing, alongside [E3] facts</text>
+    <rect class="hi" x="510" y="92"  width="236" height="56" rx="4"/>
+    <text class="tb" x="522" y="110">verify(), extended</text>
+    <text class="s"  x="522" y="126">every sentence &#8594; an [E] or a [K]</text>
+    <text class="s"  x="522" y="140">a [K] may carry no estate number</text>
+
+    <path class="ln" marker-end="url(#m9)" d="M194,39  H230 V86 H246"/>
+    <path class="ln" marker-end="url(#m9)" d="M194,89  H246"/>
+    <path class="ln" marker-end="url(#m9)" d="M194,139 H230 V92  H246"/>
+    <path class="ln" marker-end="url(#m9)" d="M350,108 V124"/>
+    <path class="ln" marker-end="url(#m9)" d="M350,162 V178"/>
+    <path class="ln" marker-end="url(#m9)" d="M350,220 V236"/>
+    <path class="ln" marker-end="url(#m9)" d="M350,274 V290"/>
+    <path class="ln" marker-end="url(#m9)" d="M450,316 H506"/>
+    <path class="ln" marker-end="url(#m9)" d="M628,294 V224"/>
+    <path class="ln" marker-end="url(#m9)" d="M628,182 V152"/>
+    <text class="s"  x="14"  y="196">The output of ingestion is a</text>
+    <text class="s"  x="14"  y="210">DIFF against the catalogue &#8212;</text>
+    <text class="s"  x="14"  y="224">a new lever with an owner, a</text>
+    <text class="s"  x="14"  y="238">why and a measure &#8212; not a</text>
+    <text class="s"  x="14"  y="252">retrieval blob.</text>
+    <text class="s"  x="14"  y="280">Fully automatic version:</text>
+    <text class="s"  x="14"  y="294">a scheduled fetch of that</text>
+    <text class="s"  x="14"  y="308">allowlist, diffed, raised as</text>
+    <text class="s"  x="14"  y="322">a pull request. Not a crawl.</text>
+  </svg>
+  <figcaption>Fig 9 — The aggressive LLM use sits <i>offline</i>, behind a human gate,
+  where a bad draft costs a review comment instead of a wrong answer.</figcaption>
+  </figure>
+
+  <div class="warn"><b>One stated principle needs your sign-off.</b> Retrieval over a
+  corpus <i>is</i> similarity ranking, which the project bans. I would keep it banned
+  for choosing a playbook, and allow it for finding supporting text that must then be
+  cited as <code>[K*]</code>. That is an amendment to a documented invariant, not an
+  implementation detail.</div>
+</section>
+
+<!-- ───────────────────────── 9. DATA + PLAN ───────────────────────── -->
+<section class="sheet">
+  <h2>9 · Dataset expansion, phases, and what is needed</h2>
+  <p>Pipeline B is weakest where the data has no column for the lever it is
+  recommending. Three additions, in order of what they unlock:</p>
+  <table>
+    <tr><th style="width:24%">Addition</th><th style="width:30%">Fields</th>
+        <th>What becomes answerable</th></tr>
+    <tr><td><b>1 · Retry outcomes</b></td>
+        <td><code>original_txn_id</code>, <code>attempt_no</code></td>
+        <td>Retry advice is currently <i>inferred</i> from an
+        <code>is_retriable</code> flag — whether a retry ever worked cannot be
+        measured. Turns the retry playbook from advice into a measured outcome and
+        closes the standing caveat that attempts are not linked to intent.</td></tr>
+    <tr><td><b>2 · Auth / 3DS step</b></td>
+        <td><code>auth_method</code>, <code>otp_attempts</code>, pre-auth drop-off</td>
+        <td>The journey has an authentication step with nothing behind it. Checkout
+        and auth friction is the largest real-world success-rate lever and is
+        presently unaddressable.</td></tr>
+    <tr><td><b>3 · Routing decisions</b></td>
+        <td><code>candidate_acquirers</code>, <code>chosen_acquirer</code>,
+        <code>route_reason</code></td>
+        <td>The headline demo blames routing and the data cannot see routing. Makes
+        the <code>hypothetical</code> kind a counterfactual instead of a
+        projection.</td></tr>
+    <tr><td>Lower priority</td><td>MDR per attempt · repeat-vs-first-time identity ·
+        issuer downtime windows</td>
+        <td>Lets advice be ranked by money rather than by volume.</td></tr>
+  </table>
+  <p>Keep the NPCI calibration discipline and the <code>[MODELLED]</code> /
+  <code>[ASSUMED]</code> labelling in <code>datasets/CALIBRATION.md</code> for every
+  new share.</p>
+
+  <h3>Phases</h3>
+  <table>
+    <tr><th style="width:14%">Phase</th><th style="width:43%">Work</th><th>Why this order</th></tr>
+    <tr><td><b>1</b></td><td>Router (tiers 1–2) · the mixed route · conversation
+        carry-over · the repair call · the no-match fallthrough</td>
+        <td>No new data and no corpus. This is where a reviewer feels the
+        difference.</td></tr>
+    <tr><td><b>2</b></td><td>Knowledge corpus &#8594; catalogue candidates &#8594;
+        human gate · <code>[K*]</code> citations · extended
+        <code>verify()</code></td>
+        <td>Widens what B can say at all, and is reviewable by a payments
+        person.</td></tr>
+    <tr><td><b>3</b></td><td>Dataset expansion &#8594; new playbook families
+        (retry outcomes, auth, routing)</td>
+        <td>Largest effort, and the first two phases work without it.</td></tr>
+  </table>
+
+  <h3>Open questions — these change what gets built</h3>
+  <ol>
+    <li><b>Is this still the assignment, or a product?</b> The assignment favours
+      phase 1 only. A product justifies the corpus and the dataset.</li>
+    <li><b>Time box.</b></li>
+    <li><b>Corpus sources.</b> Real payments documents you are permitted to use, or
+      public sources only? And is there network access where you build and demo?</li>
+    <li><b>LLM budget.</b> Still free-tier at ~11s per call? That sets how many of the
+      six slots get filled.</li>
+    <li><b>The similarity-ranking amendment</b> in section 8 — your call.</li>
+    <li><b>Commit first.</b> 83 files are uncommitted on top of three commits; all of
+      the Lab, advisory, conversation and deploy work is unversioned.</li>
+  </ol>
+
+  <div class="note"><b>One correction to carry forward.</b>
+  <code>README.md</code> still reports 76 tests in two places (the real number is
+  325), and <code>ASSUMPTIONS.md</code> §7 still says multi-turn follow-ups are not
+  implemented and the eval set is 15 questions. Both are now false.</div>
+</section>
+
+</body></html>

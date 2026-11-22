@@ -39,9 +39,9 @@ class GuardBlocked(Exception):
         super().__init__(f"[{check}] {reason}")
 
 
-def _parse(sql: str) -> exp.Expression:
+def _parse(sql: str, dialect: str = DIALECT) -> exp.Expression:
     try:
-        stmts = sqlglot.parse(sql, read=DIALECT)
+        stmts = sqlglot.parse(sql, read=dialect)
     except Exception as exc:  # noqa: BLE001
         raise GuardBlocked("c1_parse", f"query does not parse: {exc}") from exc
     stmts = [s for s in stmts if s is not None]
@@ -157,11 +157,20 @@ def _c7_sentinel_limit(root: exp.Expression, max_rows: int) -> int:
     return sentinel
 
 
-def _c8_explain(sql: str) -> int | None:
+def _c8_explain(sql: str, scan_limit: int | None = None) -> int | None:
     """
     Cost control, not row-cap control. DuckDB's GROUP BY cardinality estimates are
     routinely off by an order of magnitude in both directions, so the threshold is
     deliberately generous; the sentinel limit catches real overflow 200ms later.
+
+    `scan_limit` raises the ceiling for a caller whose SQL is FIXED and reviewed
+    rather than model-generated. Measured need: a dashboard panel joining three
+    dimension tables and running a `count(distinct)` estimates at 965M rows and
+    actually executes in 129ms over 777k. Blocking it is a false positive, and the
+    plan this system was built from says so explicitly — a false block refuses a
+    legitimate question. For such callers the real protection is the statement
+    timeout in executor.py, not an estimate that is wrong by three orders of
+    magnitude. The check still runs, and still fires on a genuine runaway.
     """
     try:
         rows = db.cursor().execute(f"explain {sql}").fetchall()
@@ -173,22 +182,33 @@ def _c8_explain(sql: str) -> int | None:
     ecs = [int(x.replace(",", "")) for x in re.findall(r"~\s*([\d,]+)\s*rows", text)]
     ecs += [int(x.replace(",", "")) for x in re.findall(r"EC:\s*([\d,]+)", text)]
     est = max(ecs) if ecs else None
-    if est is not None and est > config.EXPLAIN_SCAN_LIMIT:
+    limit = config.EXPLAIN_SCAN_LIMIT if scan_limit is None else scan_limit
+    if est is not None and est > limit:
         raise GuardBlocked(
             "c8_cost",
             f"estimated scan of {est:,} rows exceeds the limit of "
-            f"{config.EXPLAIN_SCAN_LIMIT:,}. Narrow the time window, add a filter, "
+            f"{limit:,}. Narrow the time window, add a filter, "
             "or drop a dimension.")
     return est
 
 
 def guard(sql: str, p: rbac.Principal, model: SemanticModel, *,
-          max_rows: int | None = None, run_explain: bool = True) -> GuardResult:
-    """Validate, scope and cap a query. Raises GuardBlocked on any failure."""
+          max_rows: int | None = None, run_explain: bool = True,
+          explain_scan_limit: int | None = None,
+          dialect: str = DIALECT) -> GuardResult:
+    """
+    Validate, scope and cap a query. Raises GuardBlocked on any failure.
+
+    `dialect` defaults to duckdb, which is the only dialect PayLens speaks. It
+    is a parameter so the evaluation harness can run this same check set
+    against a SQLite benchmark corpus without a second copy of it existing —
+    a copy would drift, and the one that drifted would be the one claiming the
+    security properties.
+    """
     max_rows = config.MAX_SQL_ROWS if max_rows is None else max_rows
     passed: list[str] = []
 
-    root = _parse(sql);                     passed.append("c1_single_statement")
+    root = _parse(sql, dialect);            passed.append("c1_single_statement")
     _c2_select_only(root);                  passed.append("c2_select_only")
     _c3_no_injection(sql, root, model);     passed.append("c3_no_injection")
     tables = _c4_tables(root, model);       passed.append("c4_table_allowlist")
@@ -201,9 +221,9 @@ def guard(sql: str, p: rbac.Principal, model: SemanticModel, *,
     sentinel = _c7_sentinel_limit(root, max_rows)
     passed.append("c7_row_cap")
 
-    final_sql = root.sql(dialect=DIALECT, pretty=True)
+    final_sql = root.sql(dialect=dialect, pretty=True)
 
-    est = _c8_explain(final_sql) if run_explain else None
+    est = _c8_explain(final_sql, explain_scan_limit) if run_explain else None
     passed.append("c8_cost_estimate")
 
     ok, why = rbac.assert_injected(root, preds)

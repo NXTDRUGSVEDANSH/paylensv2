@@ -4,10 +4,12 @@ services:
     env: python
     region: oregon
     plan: free
-    buildCommand: "pip install -r requirements.txt && python data/generate.py"
-    startCommand: "python -m uvicorn backend.api.main:app --host 0.0.0.0 --port $PORT"
+    buildCommand: "pip install -r requirements.txt && python data/generate.py && python -m paylens2.schema.build && python -m paylens2.knowledge.build"
+    startCommand: "python -m uvicorn paylens2.api.app:app --host 0.0.0.0 --port $PORT"
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.8
+      # v2 needs the knowledge corpus and the few-shot store, so Chroma stays on.
+      # The free tier's memory cap is handled by DUCKDB_MEMORY_LIMIT instead.
       - key: DISABLE_CHROMA
-        value: "true"
+        value: "false"

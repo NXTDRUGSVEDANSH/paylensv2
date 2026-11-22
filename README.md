@@ -25,187 +25,266 @@ tool that plots per-rail trends reports *"nothing changed"* — also wrong, the 
 number really did fall. Only the mix-vs-rate decomposition produces the actionable
 answer, and it points at a different team entirely.
 
+> A language model writes the SQL. The guard decides whether it runs. Python computes
+> every figure in the answer, so a number you can see is a number that traces back to
+> a query you can read.
+
+```
+775,957 payment attempts   ·   2 model calls per answer
+14 validation checks before execution   ·   6 answer shapes   ·   287 tests
+```
+
+Built for the Pine Labs *Enterprise AI Business Analyst* assignment.
+
 ---
 
 ## Run it
 
 ```bash
-# 1. Python 3.12 (3.14 has no onnxruntime wheels for chromadb)
-uv venv ~/.venvs/paylens --python 3.12
-VIRTUAL_ENV=~/.venvs/paylens uv pip install -r requirements.txt
+# Python 3.12 — 3.14 has no onnxruntime wheels for chromadb
+python -m venv ~/.venvs/paylens && source ~/.venvs/paylens/bin/activate
+pip install -r requirements.txt
 
-# 2. Generate the dataset (deterministic, seed=42, ~40s) and verify it
-~/.venvs/paylens/bin/python data/generate.py
-~/.venvs/paylens/bin/python data/verify.py
+cp .env.example .env              # add an OpenRouter key
+python data/generate.py           # deterministic, seed 42, ~40s
+python data/verify.py             # acceptance checks on the generated data
+python -m paylens2.schema.build   # creates v_attempts and v_settlements
 
-# 3. Serve API + UI on http://127.0.0.1:8000
-~/.venvs/paylens/bin/python -m uvicorn backend.api.main:app --port 8000
+python -m paylens2.api.app        # http://localhost:8001
 ```
 
-`cp .env.example .env` and add an OpenRouter key to enable the language model.
-**It runs without one** — see "No API key required" below.
+`GET /v2/health` reports whether the views are built and which model is wired up.
+Sign-in is optional — it changes the row filter the guard injects into your SQL, and
+you can watch it appear in the SQL tab.
 
 ```bash
-~/.venvs/paylens/bin/python -m pytest -q      # 76 tests
-~/.venvs/paylens/bin/python -m eval.run       # scorecard
+pytest -q                       # 240 tests
+pytest evaluation/tests -q      # 47 more; no LLM, no network needed
 ```
 
-## Measured results
+---
 
-Produced by `python -m eval.run`, deterministic, **with zero LLM calls**.
+## What it does
 
-| Measure | All | In-distribution phrasing | Unseen phrasing |
-|---|---|---|---|
-| Execution accuracy | 100% (15/15) | 100% (10/10) | 100% (5/5) |
-| Metric-value accuracy (±0.1%) | 100% (15/15) | 100% (10/10) | 100% (5/5) |
-| Schema precision | 100% (15/15) | 100% (10/10) | 100% (5/5) |
-| Decomposition accuracy | 100% (1/1) | — | — |
-| **Guard recall** | **100% (10/10)** | — | — |
-| Ambiguity handling | 100% (5/5) | — | — |
+Three kinds of question, six shapes of answer. The branch is chosen by the model and
+then verified in Python — a definitional question answered with a number is wrong
+even when the number is right, which is why `explain` exists as its own path.
 
-Reference SQL for all 15 is **hand-written independently** of the compiler — if the
-eval reused the system's own SQL it would only prove the system agrees with itself.
-**Schema precision** is the measure people skip and the one that matters: it checks
-the tables *touched*, catching a right number reached through a wrong join.
+| Ask | Branch | What comes back |
+|---|---|---|
+| "success rate by rail last week" | `sql` | a measured number with its denominator, a chart, the evidence |
+| "why did success rate drop" | `decompose` | a mix-versus-rate split computed in Python, identity asserted |
+| "how do I reduce technical declines" | `advise` | levers from the catalogue, each with an owner |
+| "what is the formula for success rate" | `explain` | the definition from the semantic model, never a value |
+| "what's our success rate" | `clarify` | the question that separates two readings |
+| "how many chargebacks" | `refuse` | this dataset does not hold that, and the nearest field that does exist |
 
-15 questions is a small set, and it is reported as 15 rather than inflated.
-
-## No API key required
-
-With `LLM_API_KEY` unset, the deterministic resolver plans the analysis and template
-narration writes it up. Every number, caveat, decomposition and refusal above was
-produced that way. The model adds fluency and handles genuinely ambiguous questions;
-**it is not load-bearing for correctness**, because it never computes a value — it
-picks a metric id, and Python does the arithmetic.
+---
 
 ## How it works
 
 ```
 question
-  └─ 0  destructive-intent check ................... read-only refusal
-  └─ 1  resolve        deterministic: metric, dimensions, window, intent  [no LLM]
-  └─ 2  RBAC scope     out-of-scope entity -> explicit refusal  (before any cache)
-  └─ 3  L0 cache       exact question hash                              ~10ms
-  └─ 4  freshness      trim a part-ingested window before compiling
-  └─ 5  KB probe       tier 1 reuse · tier 2 few-shot · tier 3 cold
-  └─ 6  plan           cache -> deterministic -> LLM, in that order
-  └─ 7  compile        plan -> parameterised SQL template
-  └─ 8  GUARD          9 checks, fails closed            <- nothing bypasses this
-  └─ 9  L2 cache       keyed on post-RBAC SQL
-  └─ 10 execute        + self-healing, each retry re-entering the guard
-  └─ 11 row cap        aggregate over cap -> block; detail -> truncate + banner
-  └─ 12 data quality   caveats on the tables actually touched
-  └─ 13 drivers        mix-vs-rate decomposition                        [no LLM]
-  └─ 14 chart          LLM proposes, rules validate against real shape
-  └─ 15 actions        selected from a catalogue, each with an owner
-  └─ 16 narrate        receives only computed numbers                   [1 LLM call]
-  └─ 17 confidence     arithmetic, with the deductions shown
+  1  author       schema card + few-shots + catalogue  →  one of six actions   [LLM]
+  2  check 10     views only · no SELECT * · metric formulas verbatim
+  3  guard        the nine AST checks, incl. RBAC injection and a re-walk
+  4  execute      read-only, with a timeout and a row cap
+  5  profile      deterministic statistics → numbered fact pack E1…En     [no LLM]
+  6  synthesise   prose from the pack only → verify → one repair           [LLM]
+  7  write back   kept as an unverified few-shot
 ```
 
-### The decomposition
+Steps 2–3 are a heal loop: a rejection goes back to the model with the reason, and
+the repaired SQL re-enters **both** from the top. The check that rejected a query is
+never relaxed to let its replacement through.
 
+### Four decisions that carry the design
+
+**The views carry the rules the model would otherwise forget.** `v_attempts` is
+de-duplicated — the raw table contains a planted double-ingest — and pre-joined to
+all five dimensions, with indicator columns holding the official metric semantics
+(`is_resolved` excludes PENDING deliberately: an attempt that has not resolved is not
+a failure, and counting it as one understates the rate). The raw `fact_*`/`dim_*`
+tables are absent from the allowlist, so the model cannot reach them, and it cannot
+forget a rule it never knew existed.
+
+**Python computes, the model picks.** There is no calculator tool, because a number
+from a tool call has no provenance to show beside the answer. The profiler produces a
+numbered fact pack; the composition may state only what is in it, and `verify()`
+discards the whole thing otherwise. Periods are resolved in Python too — asked for
+"last week" on a Saturday the model returned the trailing seven days despite an
+explicit instruction, because finding the previous Monday is arithmetic.
+
+**The query is cached; the answer never is.** A hit skips call 1 and nothing else, so
+numbers are measured fresh and the guard still injects the caller's row filter. The
+resolved window is part of the cache key, so replaying "last week" after the week
+rolls over is a miss by construction rather than a confident wrong answer.
+
+**Failing honestly — four rungs, and only the last may blame the data.** It worked →
+the answer. Some evidence failed → the rest, saying how many did not run. Nothing ran
+→ *"a failure on my side"*, plus questions that do work. The concept is absent →
+*"this dataset does not hold chargebacks"*, with the nearest field.
+
+### The hole this design had to close
+
+`rbac.assert_injected` (guard check 9) skips tables a query does not name:
+
+```python
+targets = _selects_touching(root, pred.table)
+if not targets:
+    continue          # ← vacuously passes
 ```
-Δ = Σ (w_t − w_b)·v_b   [MIX  — traffic moved to worse segments]
-  + Σ  w_t·(v_t − v_b)  [RATE — segments got worse themselves]
-```
 
-The identity is exact; `residual_pp < 1e-9` is asserted. This is also why a
-truncated aggregate is **blocked** rather than cut short: truncation breaks
-`Σw = 1`, and a wrong decomposition is worse than a refusal in a tool whose whole
-value proposition is auditability.
+The classic semantic model anchors every role scope on `fact_transactions`. A query
+that reads `v_attempts` names no `fact_transactions`, so it would get **no row filter
+while check 9 passed anyway** — a merchant reading every merchant's rows. PayLens
+declares `anchor_table: v_attempts` instead, and `guard()` is parameterised by the
+model it is handed, so enforcement is the same code pointed at a different target
+rather than a second copy that could drift. A test asserts the hole exists under the
+old model and is closed under this one.
 
-### The guard
+> **Known gap, found by the evaluation harness and still open.** The scope is declared
+> against `v_attempts` only, so a `merchant_user` query that reads `v_settlements`
+> gets no predicate and check 9 passes vacuously on it — the same hole, one view
+> across. Verified: a merchant scoped to `M-1042` reads 28,800 settlement rows
+> spanning all 240 merchants. `row_scope` is a single dict and `rbac.row_predicates`
+> returns at most one predicate, so the fix belongs there rather than in config.
+> `evaluation/metrics/paylens_metrics.py` → `rbac_enforcement` reports the offending
+> table by name.
 
-Nine checks on the sqlglot **AST**, not the SQL string — regex filtering is defeated
-by `/*x*/DROP`, and naively banning `;` breaks any query containing one in a literal.
-
-1 single statement · 2 SELECT-only · 3 no injection / denied functions ·
-4 table allowlist · 5 column allowlist + role masking · **6 RBAC predicate injected
-into the AST** · 7 sentinel `LIMIT n+1` · 8 `EXPLAIN` cost + timeout ·
-**9 re-walk the AST to assert the RBAC predicate survived as a top-level conjunct**
-
-Check 9 exists because check 6 can be satisfied by a predicate that an `OR 1=1`
-has neutralised — exactly the escape a "helpful" self-heal can introduce.
-
-### Access control
-
-Row filters are injected into the AST, never requested in a prompt. But filtering
-alone is not enough: a `merchant_user` asking *"compare me to M-2201"* would get a
-silently empty or self-comparing result. So an out-of-scope **entity** triggers an
-explicit refusal naming it — a wrong answer is worse than a refusal.
+---
 
 ## The data
 
-Synthetic rows, **calibrated to NPCI's published figures**. 777,757 attempts over
-120 days, real bank names, and UPI decline rates that reproduce NPCI's September 2026
-aggregate exactly:
+Six related tables, generated deterministically (`seed=42`, ~40s), **calibrated to
+NPCI's published September 2026 figures** rather than invented: technical decline
+0.24%, business decline 10.88%, implied approval rate 88.88%, worst published Fino
+24.26% BD and ICICI 0.73% TD.
 
-```
-volume-weighted BD  10.89%   (NPCI published 10.88%)
-volume-weighted TD   0.24%   (NPCI published  0.24%)
-implied approval    88.87%   (derived        88.88%)
-```
+Where it departs, it says so. Technical decline is set to **1.5%**, not 0.24% — at the
+published rate the dataset holds ~1,800 technical declines across four months, too few
+to decompose, rank or trend, so the product would have nothing to demonstrate on its
+most interesting path. Every modelled share is labelled `[MODELLED]` or `[ASSUMED]` in
+[`datasets/CALIBRATION.md`](datasets/CALIBRATION.md), with its source.
 
-Provenance for every constant, and the source-quality caveats, are in
-[`datasets/CALIBRATION.md`](datasets/CALIBRATION.md).
+**Five faults are planted on purpose**, and five probes surface them against the window
+each answer actually used:
 
-Six defects are planted on purpose, each mapping to a required failure scenario:
-duplicate `txn_id`s (double ingest), 2.27% unattributed issuer, a settlement/
-transaction disagreement on three merchants, negative amounts, two partially
-ingested days, and the mix shift itself.
-
-## Demo script
-
-| # | Question | Shows |
-|---|---|---|
-| 1 | *Why did our overall success rate drop last week?* | Mix-vs-rate decomposition, waterfall, 93% mix. **Satisfies the minimum demonstration on its own.** |
-| 2 | *How many transactions did merchant M-1042 process in October?* | Three caveats at once: duplicates, null issuer, settlement disagreement with its precedence rule |
-| 3 | *Compare my success rate with merchant M-2201* (role: merchant_user) | **Explicit refusal** naming the out-of-scope entity, plus the injected SQL predicate |
-| 4 | *What's our success rate?* | Ambiguous window **and** denominator — answered under stated assumptions |
-| 5 | *Delete all failed transactions* / *Show me every transaction row ever* | Read-only refusal; then row-cap truncation with "showing 5,000 of 769,853" |
-
-Deep links work: `/?q=...&role=merchant_user&claim=M-1042`.
-
-## Screenshots
-
-[`docs/screenshots/`](docs/screenshots/) — the decomposition waterfall, dark mode,
-the access-control refusal, and three data-quality caveats firing at once.
-
-## Requirement coverage
-
-| Requirement | Where |
+| Probe | What it finds on this dataset |
 |---|---|
-| ≥2 related datasets | 6 datasets, `semantic/semantic_model.yaml` |
-| NL questions on metrics & trends | `core/resolver.py`, `core/planner.py` |
-| Generate & execute SQL | `core/compiler.py`, `core/executor.py` |
-| Show the query / analysis steps | Query + Trace tabs; `evidence.template_sql` |
-| Charts & tables | `frontend/charts.js` (waterfall, bar, line, share-area, KPI) |
-| Cite dataset, filters, time window | Evidence tab |
-| Fact vs hypothesis vs recommendation | Three separate fields in `Narration` |
-| Role-based access & query restrictions | `core/rbac.py`, guard checks 6 & 9 |
-| Data-quality & missing-data warnings | `core/dq.py` |
-| Cohorts & drill-down | `core/drivers.py` |
-| Query cost/timeout controls & caching | Guard check 8, `core/cache.py`, `kb/` |
-| Known-answer evaluation | `eval/` |
-| Confidence & uncertainty | `core/confidence.py` |
-| All 6 failure scenarios | Demo script above |
+| `duplicate_txn_ids` | verifies the view's de-duplication held |
+| `null_issuer` | 2.09% of attempts have no issuer, so issuer rows will not sum |
+| `partial_days` | the last 2 days are part-ingested; reported, never trimmed |
+| `negative_amount` | refund corrections posted against the original rail |
+| `settlement_mismatch` | 5 merchants where transactions and settlements disagree |
+
+Findings are appended to the answer's caveats, because a warning nobody surfaces was
+not issued. Every probe runs through the guard with the caller's own principal — a
+background query is the easiest place to leak rows a role may not see, precisely
+because it is not user-initiated and so never looks like the thing to check.
+
+---
+
+## Evaluation
+
+A 400-question bank across 15 buckets — measurement, statistical, maths-derived,
+advisory, definitional, causal, ambiguous, out-of-scope, adversarial, RBAC-scoped and
+multi-turn — run against PayLens and against a deliberate baseline. Every formula and
+what it catches is in [`evaluation/METRICS.md`](evaluation/METRICS.md).
+
+```bash
+python -m evaluation.datasets.bank_build --check    # validates the 400
+python -m evaluation.runners.run_own_eval --smoke   # one per bucket, ~90s
+python -m evaluation.runners.run_own_eval --pipeline v2,baseline --workers 3
+python -m evaluation.runners.run_judge   --run <run_id>   # G-Eval, separately
+python docs/build_deck.py --run <run_id>                  # rebuild the report
+```
+
+240 of the 400 questions are **generated and self-labelling**: the metric × dimension
+× period coordinates a question is built from *are* its expected labels, so they carry
+no annotation risk. 60 carry hand-written gold SQL.
+
+**The baseline** is two model calls and nothing else — call 1 writes SQL from the raw
+`fact_*`/`dim_*` DDL, call 2 narrates the rows. No retrieval, no healing, no views, no
+guard, no profiler, no grounding check. Same model, same temperature, same questions.
+It is not a straw man; it is the shape most text-to-SQL systems ship in.
+
+| | PayLens | Baseline |
+|---|---|---|
+| Execution success rate | **95.7%** | 83.1% |
+| EX on the gold subset | **100%** (16 comparable refs) | — |
+| Schema precision | **100%** | 0% |
+| Metric-formula fidelity | **100%** | 0% |
+| False-refusal rate | **1.1%** | 30.1% |
+| VES-static | **99.8%** | 70.0% |
+| Action routing | **90.5%** | 65.8% |
+| RBAC leak resistance | **100%** (40/40 tampers refused) | — |
+| P50 / P95 latency | 14.6s / 32.6s | 3.5s / 8.1s |
+
+G-Eval — judge `ernie-5.5-flash`, deliberately **not** the author model, since
+self-judging shares the blind spots that produced the answer — puts the two within a
+few points on prose quality (composite **82.5 vs 79.9**), and the baseline wins on
+completeness. That is the honest result: both are driven by the same model, so both
+write readable answers. The separation is in the deterministic checks a judge cannot
+fake, and the latency those checks cost is the price.
+
+Each pipeline is judged against **the schema it was actually given**. Handing
+PayLens's view card to both scored every baseline answer 0.0 on schema alignment — for
+using tables only PayLens had been told were blocked — which measured obedience, not
+quality.
+
+### Reproducibility
+
+The evaluation date is pinned to **2026-11-20**: `periods.resolve()` bakes literal
+dates into the SQL, the data ends there, and unpinned "last week" resolves to a
+near-empty window. The cache is off for the headline run — a hit drops the author call
+from ~11,700ms to ~15ms and would turn the latency table into two distributions
+reported as one. Write-back is off so the few-shot corpus is frozen and question 400
+sees exactly what question 1 saw.
+
+**BIRD** (`evaluation/runners/run_bird_eval.py`) is built and tested but needs the
+Mini-Dev SQLite databases, distributed only via a Google Drive link on
+<https://bird-bench.github.io/>. Extract to
+`evaluation/datasets/bird_dbs/<db_id>/<db_id>.sqlite`; the 500 questions and gold SQL
+load from HuggingFace automatically. The runner preflights and evaluates only the
+databases present, so it is correct at 0, 3 or 11 of them.
+
+---
 
 ## Layout
 
 ```
-data/        generator (NPCI-calibrated) + verifier
-datasets/    generated parquet/csv + CALIBRATION.md
-semantic/    semantic_model.yaml · actions.yaml · seeds.yaml · loader
-backend/
-  core/      resolver planner compiler guard rbac executor healing
-             dq drivers chartmeta narrator actions confidence cache pipeline
-  kb/        chroma store · tiered retrieval · canonicalisation · write-back
-  llm/       OpenRouter transport
-  api/       FastAPI
-frontend/    static UI, no build step
-eval/        golden.yaml (hand-written SQL) · adversarial.yaml · run.py
-tests/       76 tests
+paylens2/            the pipeline
+  api/               FastAPI app and the /v2 routes
+  core/              author · checks · profile · synth · drivers · dq · sqlcache
+  schema/            views.sql, views.yaml (the semantic model), build.py
+  knowledge/         the definitional corpus and its builder
+  frontend/          the chat UI and 797 lines of hand-rolled SVG charts
+  tests/             185 tests
+backend/             shared runtime: guard, rbac, executor, db, llm, kb
+semantic/            playbooks.yaml (9 playbooks, 29 levers), seeds.yaml
+evaluation/          the harness — see evaluation/README.md
+data/                generate.py, verify.py, npci_calibration.py
+datasets/            the generated tables and CALIBRATION.md
+docs/                the architecture slide, the 7-page deck, and their generator
+eval/                golden.yaml and adversarial.yaml — inputs to the bank
 ```
 
-**Read [`ASSUMPTIONS.md`](ASSUMPTIONS.md) next** — assumptions, mocks, limitations,
-and the four defects found in the reference implementation and closed here.
+## Limits, stated first
+
+- **It needs a language model to author.** With no key it refuses rather than guessing.
+  The definitional and decomposition paths have offline templates, so those two degrade
+  rather than fail.
+- **Conversation state lives in the browser.** Clearing site data loses the threads, and
+  they do not follow you to another device.
+- **Advisory coverage is exactly as wide as `playbooks.yaml`** and no wider. A question
+  no playbook covers degrades to a measurement rather than inventing counsel.
+- **The settlements RBAC gap above is real and open.**
+- **Numbers move between runs.** `LLM_TEMPERATURE` is 0.2, not 0, and the provider does
+  not guarantee determinism. The *protocol* is reproducible — pinned date, committed
+  bank, frozen corpus, cache off — but expect EX to move a point or two.
+
+**Read [`ASSUMPTIONS.md`](ASSUMPTIONS.md) next** for the assumptions, mocks and
+limitations in full. Note that `ASSUMPTIONS.md`, `SUBMISSION.md` and `WORKFLOW.md`
+still describe the retired compiled-plan engine in places and are being brought up to
+date; this README and `evaluation/METRICS.md` are current.

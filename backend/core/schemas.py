@@ -223,9 +223,20 @@ class LLMCall(BaseModel):
 
 
 class RunTrace(BaseModel):
+    followup: bool = False
     cache_tier: CacheTier = CacheTier.COLD
     cache_similarity: float | None = None
     cache_demotion_reason: str | None = None
+    # Which knowledge-base record was reused, and what was offered as few-shots.
+    # Without these the cache is a black box: you can see THAT it hit, but not
+    # what it hit, which makes a wrong reuse impossible to spot by eye.
+    cache_matched_id: str | None = None
+    cache_matched_question: str | None = None
+    cache_matched_canonical: str | None = None
+    cache_matched_source: str | None = None
+    fewshots: list[dict[str, Any]] = Field(default_factory=list)
+    canonical_question: str | None = None
+    shape_key: str | None = None
     answer_cache_hit: bool = False
     healed: bool = False
     heal_attempts: int = 0
@@ -247,6 +258,139 @@ class ScopeViolation(BaseModel):
     allowed_alternative: str | None = None
 
 
+class ClarifyOption(BaseModel):
+    label: str
+    question: str                      # the full question to re-ask
+    is_default: bool = False
+    note: str | None = None
+
+
+class Clarification(BaseModel):
+    """
+    The question cannot be answered completely as asked.
+
+    Only raised when a MISSING input would change the answer materially — a time
+    window, or a denominator choice. Anything the system can reasonably default is
+    defaulted and stated as an assumption instead; asking about everything is its
+    own kind of unhelpful.
+    """
+    reason: str
+    missing: list[str] = Field(default_factory=list)
+    options: list[ClarifyOption] = Field(default_factory=list)
+
+
+class Finding(BaseModel):
+    """One result of the health scan. See backend/core/diagnose.py for why each
+    carries its own rule and owner rather than just a number."""
+    id: str
+    title: str
+    detail: str
+    severity: Literal["high", "medium", "low", "ok"] = "medium"
+    impact_attempts: int = 0
+    impact_value: float = 0.0
+    rule: str = ""
+    owner: str = ""
+    action: str = ""
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    sql: str = ""
+    metric_hint: str = ""
+
+
+class Diagnostic(BaseModel):
+    """A health scan: what was checked, and what cleared its threshold."""
+    window_start: date
+    window_end: date
+    findings: list[Finding] = Field(default_factory=list)
+    checks_run: list[str] = Field(default_factory=list)
+
+
+class EvidenceFact(BaseModel):
+    """
+    One measured number offered to the advisory composer.
+
+    Every fact carries the SQL that produced it, because the point of the
+    advisory path is that its numbers are the same numbers the metric path
+    would give you — measured through the same guard, under the same access
+    scope — rather than something a language model remembered about payments.
+    """
+    id: str                      # E1, E2 ... cited by the prose
+    label: str
+    value: str                   # already formatted; the composer never formats
+    detail: str = ""
+    probe: str = ""
+    sql: str = ""
+
+
+class Grounding(BaseModel):
+    """
+    The result of checking a composed answer against its evidence.
+
+    A number in the prose that is not in the evidence pack is a fabricated
+    statistic, and in a payments tool that is worse than no answer at all. See
+    backend/core/advisory.py for why failing the check discards the whole
+    composition rather than editing it.
+    """
+    numbers_checked: int = 0
+    ungrounded: list[str] = Field(default_factory=list)
+    citations_checked: int = 0
+    bad_citations: list[str] = Field(default_factory=list)
+    verdict: Literal["grounded", "rejected", "not_applicable"] = "not_applicable"
+    note: str = ""
+
+
+class AdvisoryLever(BaseModel):
+    """One thing the user could do, selected from semantic/playbooks.yaml."""
+    lever: str
+    owner: str
+    why: str
+    measure: str = ""            # a question PayLens can answer to check it
+
+
+class AdvisoryDefinition(BaseModel):
+    term: str
+    says: str
+    matters: str = ""
+
+
+class Advisory(BaseModel):
+    """
+    An answer to a question with no computable result.
+
+    `composed_by` is load-bearing in the UI: a reader is entitled to know
+    whether the prose was written by a model or assembled from the catalogue,
+    because those two things fail in different ways.
+    """
+    kind: Literal["definition", "recommendation", "explanation",
+                  "benchmark", "hypothetical"]
+    title: str
+    frames: str = ""             # the one idea to hold before the levers
+    answer: str = ""             # composed prose
+    definitions: list[AdvisoryDefinition] = Field(default_factory=list)
+    levers: list[AdvisoryLever] = Field(default_factory=list)
+    facts: list[EvidenceFact] = Field(default_factory=list)
+    limits: list[str] = Field(default_factory=list)
+    sources: list[str] = Field(default_factory=list)   # catalogue ids used
+    window_start: date | None = None
+    window_end: date | None = None
+    composed_by: Literal["llm", "catalogue"] = "catalogue"
+    grounding: Grounding = Field(default_factory=Grounding)
+    follow_ups: list[str] = Field(default_factory=list)
+
+
+class Inherited(BaseModel):
+    """
+    What a follow-up carried over from the previous turn. Always rendered: an
+    inherited assumption the user cannot see is one they cannot correct.
+    """
+    metric: str | None = None
+    window_label: str | None = None
+    filters: list[Filter] = Field(default_factory=list)
+    segment_by: list[str] = Field(default_factory=list)
+    replaced_filters: list[str] = Field(default_factory=list)
+    from_question: str = ""
+    summary: str = ""
+
+
 class AnswerCard(BaseModel):
     ok: bool = True
     question: str
@@ -254,6 +398,9 @@ class AnswerCard(BaseModel):
     refused: bool = False
     refusal_reason: str | None = None
     scope_violations: list[ScopeViolation] = Field(default_factory=list)
+
+    needs_clarification: bool = False
+    clarification: Clarification | None = None
 
     plan: AnalysisPlan | None = None
     narration: Narration | None = None
@@ -264,5 +411,10 @@ class AnswerCard(BaseModel):
     assumptions: list[Assumption] = Field(default_factory=list)
     confidence: Confidence | None = None
     evidence: Evidence | None = None
+    diagnostic: Diagnostic | None = None
+    advisory: Advisory | None = None
+    inherited: Inherited | None = None
+    conversation_id: str | None = None
+    turn: int | None = None
     trace: RunTrace = Field(default_factory=RunTrace)
     generated_at: datetime = Field(default_factory=datetime.now)
