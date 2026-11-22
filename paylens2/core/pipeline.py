@@ -259,6 +259,7 @@ def _advise(ans: V2Answer, a, question: str, p, model, persona: str,
     ans.grounding = {"verdict": out.grounding.verdict, "note": out.grounding.note,
                      "numbers_checked": out.grounding.numbers_checked,
                      "ungrounded": out.grounding.ungrounded,
+                     "wrong_superlatives": out.grounding.wrong_superlatives,
                      "levers_checked": out.grounding.levers_checked,
                      "invented_levers": out.grounding.invented_levers,
                      "repaired": out.grounding.repaired}
@@ -331,6 +332,7 @@ def _explain(ans: V2Answer, a, question: str, persona: str, budget, finish,
     ans.grounding = {"verdict": e.grounding.verdict, "note": e.grounding.note,
                      "numbers_checked": e.grounding.numbers_checked,
                      "ungrounded": e.grounding.ungrounded,
+                     "wrong_superlatives": e.grounding.wrong_superlatives,
                      "repaired": e.grounding.repaired}
     # The obvious follow-up is offered, never answered. "What is the formula"
     # does not become "and here is last month's value" unless the user asks.
@@ -454,6 +456,7 @@ def _decompose(ans: V2Answer, a, question: str, p, model, persona: str,
     ans.grounding = {"verdict": s.grounding.verdict, "note": s.grounding.note,
                      "numbers_checked": s.grounding.numbers_checked,
                      "ungrounded": s.grounding.ungrounded,
+                     "wrong_superlatives": s.grounding.wrong_superlatives,
                      "repaired": s.grounding.repaired}
     ans.chart = {"chart_type": "waterfall", "title":
                  f"{dec.dimension}: mix versus rate"}
@@ -832,6 +835,7 @@ def _measure(ans: V2Answer, a, question: str, p, model, persona: str, budget,
     ans.grounding = {"verdict": s.grounding.verdict, "note": s.grounding.note,
                      "numbers_checked": s.grounding.numbers_checked,
                      "ungrounded": s.grounding.ungrounded,
+                     "wrong_superlatives": s.grounding.wrong_superlatives,
                      "repaired": s.grounding.repaired}
     # The proposal was written before a single row existed, so every column it
     # names is a guess. Honour it where the result allows; override where it

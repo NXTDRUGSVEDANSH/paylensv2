@@ -168,18 +168,31 @@ def verify_superlatives(text: str, facts: list[Fact],
     """
     Sentences that name the wrong segment as the best or the worst.
 
-    Deliberately conservative: a sentence is flagged only when it uses a
-    superlative, names a segment that is NOT the extreme, and does not also
-    name the one that is. "WALLET leads, ahead of UPI" is left alone; "UPI was
-    the highest" when WALLET is, is not. A false rejection throws away a good
-    answer, so the check would rather miss than guess.
+    THE EXTREME IS PER METRIC, NOT PER DIRECTION
+    --------------------------------------------
+    A breakdown usually carries two measures — a rate and the volume beneath
+    it — and they peak on different segments. The first version of this kept
+    one "highest" for the whole pack, so "EMI had the highest average ticket"
+    (true) was checked against the highest TRANSACTION COUNT (UPI) and
+    rejected. Discarding a correct answer is a worse failure than the one
+    this check exists to catch, because it is invisible: the reader sees a
+    terse fallback and no reason.
+
+    So each extreme is keyed by its metric, and a sentence is only judged
+    against a metric it actually mentions.
+
+    Conservative throughout: flagged only when a sentence names the metric,
+    uses a superlative, names a segment that is not that metric's extreme,
+    and does not also name the one that is.
     """
-    extremes: dict[str, str] = {}          # "hi"/"lo" -> the true segment
+    # (metric, direction) -> the segment that actually holds it
+    extremes: dict[tuple[str, str], str] = {}
     for f in facts:
         m = _EXTREME.search(f.label or "")
         if m:
-            extremes.setdefault("hi" if m.group(1) == "highest" else "lo",
-                                m.group(2).strip())
+            metric = (f.label or "")[:m.start()].strip().lower()
+            direction = "hi" if m.group(1) == "highest" else "lo"
+            extremes[(metric, direction)] = m.group(2).strip()
     if not extremes:
         return []
 
@@ -192,20 +205,61 @@ def verify_superlatives(text: str, facts: list[Fact],
         low = sentence.lower()
         directions = {d for word, d in _SUPERLATIVE.items()
                       if re.search(rf"\b{word}\b", low)}
-        # A sentence claiming both ends at once ("highest ... lowest ...")
-        # cannot be attributed to one segment safely, so it is left alone.
+        # Both ends in one sentence cannot be attributed safely.
         if len(directions) != 1:
             continue
         direction = directions.pop()
-        truth = extremes.get(direction)
-        if not truth:
+
+        # Which metric is this sentence about? Match on the metric's own
+        # words, so "average ticket size" finds the `avg ticket` facts.
+        candidates = [(metric, who) for (metric, d), who in extremes.items()
+                      if d == direction and _mentions_metric(low, metric)]
+        if len(candidates) != 1:
+            # Nothing identifiable, or two metrics named at once. Either way
+            # there is no single truth to check against.
             continue
-        named = {l for l in labels if re.search(rf"\b{re.escape(l.lower())}\b", low)}
+        metric, truth = candidates[0]
+
+        named = {l for l in labels
+                 if re.search(rf"\b{re.escape(l.lower())}\b", low)}
         if named and truth.lower() not in {n.lower() for n in named}:
-            bad.append(f"{sentence.strip()[:90]} — "
-                       f"the {'highest' if direction == 'hi' else 'lowest'} "
-                       f"is {truth}")
+            bad.append(f"{sentence.strip()[:90]} — the "
+                       f"{'highest' if direction == 'hi' else 'lowest'} "
+                       f"{metric} is {truth}")
     return bad
+
+
+def _mentions_metric(sentence_lower: str, metric: str) -> bool:
+    """
+    Does this sentence talk about this metric?
+
+    Word-level rather than exact: the fact pack says `avg ticket` and prose
+    says "average ticket size". Matching the distinctive words — ignoring
+    "avg"/"average", which appear in half the metrics — is enough to tell a
+    rate sentence from a volume one, which is all this needs to decide.
+    """
+    words = [w for w in re.findall(r"[a-z]+", metric)
+             if w not in {"avg", "average", "rate", "count", "total"}]
+    if not words:
+        words = re.findall(r"[a-z]+", metric)
+    # The pack uses the column name, the prose uses English. `txn count` and
+    # "transaction count" are the same measure, and without this the check
+    # simply skipped every sentence about volume — silently, which is the
+    # worst way for a safety check to fail.
+    return all(any(form[:5] in sentence_lower for form in _ALIASES.get(w, (w,)))
+               for w in words)
+
+
+# column word -> every spelling a composition might use for it
+_ALIASES: dict[str, tuple[str, ...]] = {
+    "txn": ("txn", "transaction"),
+    "gmv": ("gmv", "gross merchandise", "revenue", "sales"),
+    "ticket": ("ticket",),
+    "latency": ("latency", "response time"),
+    "settled": ("settled", "settlement", "payout"),
+    "issuer": ("issuer", "issuing"),
+    "acquirer": ("acquirer", "acquiring"),
+}
 
 
 def verify(text: str, facts: list[Fact], profile: Profile, question: str,
@@ -424,6 +478,33 @@ def advise(question: str, queries: list[dict], profile: Profile, *, persona: str
     return fallback
 
 
+def _as_sentence(f: Fact) -> str:
+    """
+    A fact as prose, for when the composition is discarded.
+
+    The fallback used to print the label verbatim, so a rejected answer came
+    back as "avg ticket — highest (EMI): INR 1,143.85." — a column name, an
+    em dash and a parenthesis. It is the measured truth and it reads like a
+    machine, which is the wrong impression to leave precisely when the model
+    has just been caught being wrong.
+    """
+    label, value = (f.label or "").strip(), (f.value or "").strip()
+    m = re.match(r"^(.*?)\s*—\s*(highest|lowest)\s*\((.+?)\)$", label)
+    if m:
+        metric, direction, who = m.group(1), m.group(2), m.group(3)
+        return f"The {direction} {metric} was {value}, for {who}."
+    m = re.match(r"^(.*?)\s*—\s*total across all rows$", label)
+    if m:
+        return f"Total {m.group(1)} was {value}."
+    m = re.match(r"^(.*?)\s*—\s*change, (.+?) to (.+?)$", label)
+    if m:
+        return (f"{m.group(1).capitalize()} moved {value} from "
+                f"{m.group(2)} to {m.group(3)}.")
+    if label.lower().startswith("rows returned"):
+        return f"The query returned {value} rows."
+    return f"{label.capitalize()} was {value}."
+
+
 def _template(question: str, facts: list[Fact], profile: Profile) -> Synthesis:
     """
     The answer when no model writes it — a real answer, not a stub.
@@ -441,9 +522,8 @@ def _template(question: str, facts: list[Fact], profile: Profile) -> Synthesis:
                                 note="No model wrote this text.")
         return s
     head = facts[1] if len(facts) > 1 else facts[0]
-    s.headline = f"{head.label}: {head.value}."
-    s.observed = [f"{f.label} is {f.value}."
-                  + (f" ({f.detail})" if f.detail else "")
+    s.headline = _as_sentence(head)
+    s.observed = [_as_sentence(f) + (f" ({f.detail})" if f.detail else "")
                   for f in facts[1:5]]
     if profile.truncated:
         s.caveats.append("The result hit the row cap and is truncated.")

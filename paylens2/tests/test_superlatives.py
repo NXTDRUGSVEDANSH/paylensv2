@@ -99,3 +99,70 @@ def test_a_non_ratio_still_gets_its_average():
     p = profile(rows, metric_columns=["avg_latency_ms"],
                 formats={"avg_latency_ms": "number"})
     assert any("change" in f.label or "avg latency" in f.label for f in p.facts)
+
+
+# ── two metrics in one breakdown ────────────────────────────────────────────
+# A breakdown usually carries a measure and the volume beneath it, and they
+# peak on different segments. Keeping one "highest" for the whole pack meant
+# a TRUE sentence about average ticket was checked against the highest
+# transaction count and thrown away. Discarding a correct answer is the worse
+# failure, because the reader sees a terse fallback and no reason why.
+TWO_METRIC_ROWS = [
+    {"payment_method": "UPI", "avg_ticket": 1140.63, "txn_count": 26938},
+    {"payment_method": "CARD", "avg_ticket": 1134.12, "txn_count": 10775},
+    {"payment_method": "NETBANKING", "avg_ticket": 1131.88, "txn_count": 7347},
+    {"payment_method": "WALLET", "avg_ticket": 1127.09, "txn_count": 2448},
+    {"payment_method": "EMI", "avg_ticket": 1143.85, "txn_count": 1468},
+]
+
+
+def two_metric_pack():
+    return profile(TWO_METRIC_ROWS,
+                   metric_columns=["avg_ticket", "txn_count"],
+                   formats={"avg_ticket": "currency", "txn_count": "number"})
+
+
+def test_a_true_claim_about_one_metric_is_not_judged_against_the_other():
+    """EMI tops average ticket; UPI tops volume. Both sentences are true."""
+    p = two_metric_pack()
+    assert verify_superlatives(
+        "EMI had the highest average ticket size at INR 1,143.85.", p.facts, p) == []
+    assert verify_superlatives(
+        "UPI had the highest transaction count at 26,938.", p.facts, p) == []
+    assert verify_superlatives(
+        "WALLET had the lowest average ticket size.", p.facts, p) == []
+
+
+def test_a_false_claim_is_still_caught_per_metric():
+    p = two_metric_pack()
+    assert verify_superlatives(
+        "UPI had the highest average ticket size at INR 1,140.63.", p.facts, p)
+    assert verify_superlatives(
+        "EMI had the highest transaction count at 1,468.", p.facts, p)
+    assert verify_superlatives(
+        "UPI had the lowest transaction count.", p.facts, p)
+
+
+def test_the_prose_spelling_of_a_column_is_recognised():
+    """
+    The pack says `txn count`, prose says "transaction count". Without the
+    alias the check skipped every sentence about volume — silently, which is
+    the worst way for a safety check to fail.
+    """
+    p = two_metric_pack()
+    assert verify_superlatives(
+        "EMI had the highest transaction count.", p.facts, p)
+
+
+def test_the_fallback_answer_reads_as_prose():
+    """
+    A rejected composition used to come back as "avg ticket — highest (EMI):
+    INR 1,143.85." — a column name, an em dash and a parenthesis, shown at
+    exactly the moment the model has been caught being wrong.
+    """
+    from paylens2.core.profile import Fact
+    from paylens2.core.synth import _as_sentence
+    assert _as_sentence(Fact("E2", "avg ticket — highest (EMI)", "INR 1,143.85")) \
+        == "The highest avg ticket was INR 1,143.85, for EMI."
+    assert "—" not in _as_sentence(
+        Fact("E3", "success rate — lowest (NETBANKING)", "71.13%"))
