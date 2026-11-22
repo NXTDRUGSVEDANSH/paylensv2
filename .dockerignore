@@ -14,3 +14,17 @@ docs/screenshots/
 data/paylens.duckdb
 data/chroma_db/
 datasets/
+
+# The retired front end. It is kept in the tree for reference but nothing
+# serves it, and an image that carries a second UI invites the question of
+# which one is live.
+paylens2/_frontend_v1_backup/
+
+# Test and evaluation tooling: not served, and the runtime image has no
+# business carrying the question bank or a BIRD loader.
+evaluation/
+eval/
+tests/
+paylens2/tests/
+scripts/
+pinelens/

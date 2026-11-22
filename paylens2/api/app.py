@@ -48,7 +48,18 @@ except Exception as exc:  # noqa: BLE001
     # refuse to start.
     log.warning("file logging unavailable: %s", exc)
 
-PORT = int(os.getenv("V2_PORT", "8001"))
+# V2_PORT first, then PORT, then 8001.
+#
+# Two names because two launch paths reach this file. `python -m
+# paylens2.api.app` runs the __main__ block below; a container runs
+# `uvicorn paylens2.api.app:app --port $PORT`, which imports this module and
+# never executes it. Honouring both means one variable works wherever you set
+# it, instead of being silently ignored by whichever path you happened to use.
+#
+# 8001 rather than 8000 is historical — it kept this app clear of an earlier
+# one on 8000. Nothing occupies 8000 any more; the default stays only because
+# the docs and the demo point at 8001.
+PORT = int(os.getenv("V2_PORT") or os.getenv("PORT") or "8001")
 FRONTEND = Path(__file__).parent.parent / "frontend"
 
 
