@@ -31,13 +31,21 @@ COPY paylens2/ ./paylens2/
 # than shipping a dataset whose calibration has drifted.
 RUN python data/generate.py && python data/verify.py
 
-# Pre-seed Chroma AND warm the ONNX model into ~/.cache/chroma, so no container
-# ever downloads a 167 MB model on its first user request.
+# The views are part of the image, not something the container does on boot.
+# Without them every question is refused with "the views are not built", and
+# building them at startup would need write access to a database the runtime
+# opens read-only. This step is why that is never a problem.
+RUN python -m paylens2.schema.build
+
+# Pre-build the definitional corpus AND warm the ONNX embedding model into
+# ~/.cache/chroma, so no container downloads a 167 MB model on its first user
+# request. The few-shot corpus starts empty by design and fills from use —
+# retrieval degrades to a schema-only prompt, which is a perfectly good prompt.
 ENV CHROMA_PATH=/build/data/chroma_db
 RUN if [ "$WITH_KB" = "1" ]; then \
       python -c "import sys; sys.path.insert(0,'.'); \
-from semantic.loader import get_model; from backend.kb import seed, store; \
-store.warm(); print(seed.seed(get_model(), force=True))"; \
+from backend.kb import store; store.warm()" \
+   && python -m paylens2.knowledge.build; \
     else mkdir -p /build/data/chroma_db && mkdir -p /root/.cache/chroma; fi
 
 # ── stage 2: runtime ─────────────────────────────────────────────────────────
@@ -46,6 +54,7 @@ ARG WITH_KB=1
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1 \
     PORT=8000 \
+    DUCKDB_MEMORY_LIMIT=512MB \
     DUCKDB_PATH=/app/data/paylens.duckdb \
     CHROMA_PATH=/app/data/chroma_db
 
@@ -60,7 +69,6 @@ RUN pip install --no-cache-dir -r requirements-runtime.txt \
 COPY --chown=paylens:paylens backend/   ./backend/
 COPY --chown=paylens:paylens paylens2/  ./paylens2/
 COPY --chown=paylens:paylens semantic/  ./semantic/
-COPY --chown=paylens:paylens eval/      ./eval/
 COPY --chown=paylens:paylens --from=builder /build/data/paylens.duckdb ./data/paylens.duckdb
 COPY --chown=paylens:paylens --from=builder /build/data/chroma_db      ./data/chroma_db
 COPY --chown=paylens:paylens --from=builder /root/.cache/chroma        /home/paylens/.cache/chroma
