@@ -44,6 +44,10 @@ class Grounding:
     levers_checked: int = 0
     invented_levers: list[str] = field(default_factory=list)
     repaired: bool = False
+    # Sentences naming the wrong segment as best or worst. Separate from
+    # `ungrounded`, because the numbers in them are real — it is the claim
+    # around them that is false, and the repair prompt has to say which.
+    wrong_superlatives: list[str] = field(default_factory=list)
     note: str = ""
 
 
@@ -119,6 +123,91 @@ def _allowed(facts: list[Fact], profile: Profile, question: str,
     return allowed
 
 
+
+# ── superlative claims ──────────────────────────────────────────────────────
+# "every number was measured" and "every claim about those numbers is true"
+# are different guarantees, and only the first was enforced. A composition
+# read a pack whose E2 said `success rate — highest (WALLET)` and opened with
+# "UPI was the highest at 88.79%". Both figures were real, both came from the
+# pack, and the sentence was false. Another said "UPI (INR 1,140.63) highest,
+# followed by EMI (INR 1,143.85)" — contradicting itself inside one clause.
+#
+# A reader checks the headline and trusts the rest, so this is the most
+# expensive sentence in the answer to get wrong.
+_SUPERLATIVE = {
+    "highest": "hi", "greatest": "hi", "largest": "hi", "biggest": "hi",
+    "best": "hi", "top": "hi", "strongest": "hi", "maximum": "hi", "most": "hi",
+    "lowest": "lo", "smallest": "lo", "worst": "lo", "least": "lo",
+    "weakest": "lo", "minimum": "lo", "bottom": "lo",
+}
+_EXTREME = re.compile(r"—\s*(highest|lowest)\s*\((.+?)\)\s*$")
+# Split on terminal punctuation followed by whitespace, NOT on every full
+# stop. Splitting on "." alone cuts 88.79% into "88" and "79%", which breaks a
+# sentence in half and hides the claim: "UPI, at 88.79%, was the highest"
+# becomes two fragments, neither of which contains both the segment and the
+# superlative, and the check sees nothing wrong.
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?;])\s+|\n+")
+
+
+def _segment_labels(profile: Profile) -> set[str]:
+    """Every segment name the result actually contained."""
+    out: set[str] = set()
+    for col in profile.columns:
+        if col.get("kind") != "categorical":
+            continue
+        for value, _count in col.get("top", []):
+            v = str(value).strip()
+            # Two characters or fewer matches far too much ordinary prose.
+            if len(v) > 2 and v != "(null)":
+                out.add(v)
+    return out
+
+
+def verify_superlatives(text: str, facts: list[Fact],
+                        profile: Profile) -> list[str]:
+    """
+    Sentences that name the wrong segment as the best or the worst.
+
+    Deliberately conservative: a sentence is flagged only when it uses a
+    superlative, names a segment that is NOT the extreme, and does not also
+    name the one that is. "WALLET leads, ahead of UPI" is left alone; "UPI was
+    the highest" when WALLET is, is not. A false rejection throws away a good
+    answer, so the check would rather miss than guess.
+    """
+    extremes: dict[str, str] = {}          # "hi"/"lo" -> the true segment
+    for f in facts:
+        m = _EXTREME.search(f.label or "")
+        if m:
+            extremes.setdefault("hi" if m.group(1) == "highest" else "lo",
+                                m.group(2).strip())
+    if not extremes:
+        return []
+
+    labels = _segment_labels(profile)
+    if not labels:
+        return []
+
+    bad: list[str] = []
+    for sentence in _SENTENCE_SPLIT.split(text or ""):
+        low = sentence.lower()
+        directions = {d for word, d in _SUPERLATIVE.items()
+                      if re.search(rf"\b{word}\b", low)}
+        # A sentence claiming both ends at once ("highest ... lowest ...")
+        # cannot be attributed to one segment safely, so it is left alone.
+        if len(directions) != 1:
+            continue
+        direction = directions.pop()
+        truth = extremes.get(direction)
+        if not truth:
+            continue
+        named = {l for l in labels if re.search(rf"\b{re.escape(l.lower())}\b", low)}
+        if named and truth.lower() not in {n.lower() for n in named}:
+            bad.append(f"{sentence.strip()[:90]} — "
+                       f"the {'highest' if direction == 'hi' else 'lowest'} "
+                       f"is {truth}")
+    return bad
+
+
 def verify(text: str, facts: list[Fact], profile: Profile, question: str,
            sql: str = "") -> Grounding:
     allowed = _allowed(facts, profile, question, sql)
@@ -138,7 +227,8 @@ def verify(text: str, facts: list[Fact], profile: Profile, question: str,
 
     cites = _CITE.findall(text or "")
     bad = sorted({c for c in cites if c not in ids})
-    ok = not ungrounded and not bad
+    wrong_superlatives = verify_superlatives(text, facts, profile)
+    ok = not ungrounded and not bad and not wrong_superlatives
 
     note = (f"Every number was matched against the measured facts "
             f"({checked} checked, {len(cites)} citations)." if ok else
@@ -147,10 +237,15 @@ def verify(text: str, facts: list[Fact], profile: Profile, question: str,
                f"({', '.join(ungrounded[:3])})" if ungrounded else "")
             + (" and " if ungrounded and bad else "")
             + (f"citation(s) to evidence that does not exist ({', '.join(bad[:3])})"
-               if bad else "") + ".")
-    return Grounding(verdict="grounded" if ok else "rejected",
-                     numbers_checked=checked, ungrounded=ungrounded[:6],
-                     citations_checked=len(cites), bad_citations=bad[:6], note=note)
+               if bad else "")
+            + ((" and " if (ungrounded or bad) else "")
+               + f"{len(wrong_superlatives)} false superlative claim(s)"
+               if wrong_superlatives else "") + ".")
+    g = Grounding(verdict="grounded" if ok else "rejected",
+                  numbers_checked=checked, ungrounded=ungrounded[:6],
+                  citations_checked=len(cites), bad_citations=bad[:6], note=note)
+    g.wrong_superlatives = wrong_superlatives[:4]
+    return g
 
 
 # A code model writing prose runs words into numbers: "dropped to86.60% last
@@ -422,8 +517,16 @@ def synthesise(question: str, sql: str, profile: Profile, *, persona: str,
             + f"{g.note}\n\nThe offending values: {', '.join(g.ungrounded) or 'none'}"
             + (f"\nThe invalid citations: {', '.join(g.bad_citations)}"
                if g.bad_citations else "")
+            # Naming the false claim and the true extreme, because "a number
+            # is wrong" sends the model looking at the figures, and here the
+            # figures are right and the sentence around them is not.
+            + (("\nFALSE SUPERLATIVES — these sentences name the wrong segment:\n  "
+                + "\n  ".join(g.wrong_superlatives))
+               if g.wrong_superlatives else "")
             + "\n\nRewrite it. Remove or replace every number that is not in FACTS "
-              "or PROFILE. Do not add new numbers. Keep the meaning.")
+              "or PROFILE. Do not add new numbers. If a sentence says a segment is "
+              "the highest or the lowest, it must be the one FACTS names as such. "
+              "Keep the meaning.")
         raw2, _ = llmjson.call(repair_prompt, system=prompts.SYNTH_SYSTEM,
                                model=config.SYNTH_MODEL, purpose="repair",
                                budget=budget)

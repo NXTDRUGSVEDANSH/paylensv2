@@ -250,8 +250,13 @@ function note(text) {
 }
 function ctxNote() {
   const c = conv();
-  $("#ctx").textContent = c && c.turns.length
-    ? `Follow-up — the previous ${c.turns.length} turn${c.turns.length === 1 ? "" : "s"} go with this question.`
+  // Count only the turns that actually go to the model. The pipeline is sent
+  // `turns.filter(t => t.sql)` — a refusal, a clarification or a definition
+  // carries no SQL and no context, so counting every turn promised context
+  // that was never sent, and announced a follow-up in a thread that had none.
+  const n = c ? c.turns.filter(t => t.sql).length : 0;
+  $("#ctx").textContent = n
+    ? `Follow-up — the previous ${n} turn${n === 1 ? " goes" : "s go"} with this question.`
     : "New thread — this question stands alone.";
 }
 

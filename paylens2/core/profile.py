@@ -152,7 +152,8 @@ def profile(rows: list[dict], *, truncated: bool = False,
         p.sample = rows[:config.PROFILE_FULL_ROWS]
 
     fmt = _formatter(formats)
-    p.facts = _derive_facts(rows, p, metric_cols, numeric, categorical, fmt)
+    p.facts = _derive_facts(rows, p, metric_cols, numeric, categorical, fmt,
+                            formats)
     p.text = _render(p, truncated, fmt)
     return p
 
@@ -191,7 +192,7 @@ def combine(parts: list[tuple[str, Profile]]) -> Profile:
 
 
 def _derive_facts(rows, p: Profile, metric_cols, numeric, categorical,
-                  fmt=None) -> list[Fact]:
+                  fmt=None, formats: dict[str, str] | None = None) -> list[Fact]:
     fmt = fmt or (lambda c, v: _fmt(v))
     """
     The pack. Deliberately conservative: every entry is a value that was computed
@@ -270,6 +271,19 @@ def _derive_facts(rows, p: Profile, metric_cols, numeric, categorical,
                 share = (max(vals) / total) * 100
                 add(f"{c.replace('_', ' ')} — largest row's share of the total",
                     f"{share:.1f}%", f"{hi_lab}", share)
+        elif (formats or {}).get(c) == "percent":
+            # NO unweighted mean for a ratio. The average of five rails'
+            # success rates is not the success rate: it weights a rail with
+            # 1,468 attempts the same as one with 26,938. Asked for "last
+            # week" that mean is 85.91% while the real figure is 86.60%.
+            #
+            # Labelling it "unweighted" was not enough — a composition read
+            # the label and still called it "the overall average", which is
+            # the exact class of denominator error this system exists to
+            # prevent. So the fact is not produced at all, and the grounding
+            # check does the rest: a number that is not in the pack cannot be
+            # stated. An honest gap beats a plausible wrong number.
+            pass
         else:
             add(f"{c.replace('_', ' ')} — average across rows", fmt(c, total / len(vals)),
                 "unweighted; segment sizes differ", total / len(vals))
