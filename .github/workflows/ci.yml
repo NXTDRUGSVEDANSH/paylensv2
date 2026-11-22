@@ -1,0 +1,128 @@
+# Continuous integration.
+#
+# Three jobs, each catching a class of breakage the others cannot.
+#
+#   tests   the suite, against a freshly generated database — these tests read
+#           real data, so a stale or drifted dataset fails here rather than in
+#           an answer
+#   image   builds the container. Nothing else proves the Dockerfile works, and
+#           it has shipped broken before: it imported a module deleted with the
+#           old engine, and it never created the analytical views, so every
+#           container would have started cleanly and then refused every
+#           question. Both were found by reading, not by building.
+#   bank    validates the 400 evaluation questions against the semantic model,
+#           so a renamed metric cannot silently orphan a question
+#
+# No API key is needed anywhere: nothing here calls a model.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:                       # a new push supersedes an in-flight run
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # 3.12, not latest: 3.14 has no onnxruntime wheels, which chromadb
+          # needs, and the failure is an opaque build error deep in pip.
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-kb.txt
+
+      - name: Generate and verify the dataset
+        # Deterministic from seed 42. verify.py asserts the calibration still
+        # holds, so a change to the generator fails here rather than quietly
+        # shifting every number in the evaluation.
+        run: |
+          python data/generate.py
+          python data/verify.py
+
+      - name: Build the views and the knowledge corpus
+        run: |
+          python -m paylens2.schema.build
+          python -m paylens2.knowledge.build
+
+      - name: Tests
+        run: pytest -q
+
+      - name: Harness tests
+        run: pytest evaluation/tests -q
+
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the container
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: paylens:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start it and check it is actually usable
+        # Not "did the process start" — a container that boots and then refuses
+        # every question because the views are missing passes a liveness check.
+        # /health reports whether the views are built and which tables are
+        # allowed, so this asserts the image is serviceable.
+        run: |
+          docker run -d --name paylens -p 8000:8000 \
+            -e LLM_API_KEY=ci-not-a-real-key paylens:ci
+          for i in $(seq 1 40); do
+            curl -fsS http://localhost:8000/health -o /tmp/h.json 2>/dev/null && break
+            sleep 5
+          done
+          echo "--- /health"; cat /tmp/h.json; echo
+          grep -q '"views_built":true' /tmp/h.json \
+            || { echo "::error::views_built is false - the image would refuse every question"; exit 1; }
+          echo "views are built"
+          curl -fsS http://localhost:8000/ | grep -q 'PayLens' \
+            || { echo "::error::the UI is not served at /"; exit 1; }
+          echo "UI served at /"
+          docker exec paylens sh -c '! test -d /app/paylens2/_frontend_v1_backup' \
+            || { echo "::error::the retired UI is in the image"; exit 1; }
+          echo "only the current UI is present"
+
+      - name: Logs on failure
+        if: failure()
+        run: docker logs paylens || true
+
+  bank:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Generate the data the semantic model is validated against
+        run: python data/generate.py && python -m paylens2.schema.build
+      - name: Validate the 400-question bank
+        # Every expected metric and dimension must resolve against views.yaml,
+        # every role must carry its required claim, and no two records may be
+        # the same question asked by the same principal.
+        run: python -m evaluation.datasets.bank_build --check
